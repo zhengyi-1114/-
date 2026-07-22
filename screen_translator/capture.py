@@ -27,14 +27,29 @@ class Region:
 
 def grab_region(region: Optional[Region] = None) -> Image.Image:
     """截取指定区域；region 为 None 时截取全部虚拟屏幕。"""
-    with mss.mss() as sct:
+    try:
+        with mss.mss() as sct:
+            if region is None:
+                monitor = sct.monitors[0]
+                shot = sct.grab(monitor)
+            else:
+                shot = sct.grab(region.as_mss())
+            return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+    except Exception:
+        # 部分远程桌面 / 特殊 visual 下 mss 会失败，回退到 ImageGrab
+        from PIL import ImageGrab
+
         if region is None:
-            # monitors[0] 是全部显示器拼合区域
-            monitor = sct.monitors[0]
-            shot = sct.grab(monitor)
+            shot = ImageGrab.grab()
         else:
-            shot = sct.grab(region.as_mss())
-        return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+            bbox = (
+                region.left,
+                region.top,
+                region.left + region.width,
+                region.top + region.height,
+            )
+            shot = ImageGrab.grab(bbox=bbox)
+        return shot.convert("RGB")
 
 
 def grab_monitor(monitor_index: int = 1) -> Image.Image:
