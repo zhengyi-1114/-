@@ -69,7 +69,7 @@ def run_on_image(path: Path, source: str, target: str, ocr_only: bool) -> int:
 
     image = Image.open(path)
     print("正在识别文字…", file=sys.stderr)
-    text = recognize_text(image)
+    text = recognize_text(image, lang=source)
     if not text:
         print("未识别到文字。", file=sys.stderr)
         return 2

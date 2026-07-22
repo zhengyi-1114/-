@@ -37,7 +37,9 @@ class ScreenTranslatorApp:
 
         self.source_var = tk.StringVar(value="auto")
         self.target_var = tk.StringVar(value="zh-CN")
-        self.status_var = tk.StringVar(value="就绪：点击「框选翻译」或按 Ctrl+Shift+T")
+        self.status_var = tk.StringVar(
+            value="就绪：韩文请选源语言「韩语」，再框选或打开图片"
+        )
         self.busy = False
         self._hotkey_listener = None
 
@@ -307,7 +309,7 @@ class ScreenTranslatorApp:
 
         def worker() -> None:
             try:
-                original = recognize_text(image)
+                original = recognize_text(image, lang=source)
                 if not original.strip():
                     self.root.after(0, lambda: self._finish_empty())
                     return
@@ -323,7 +325,7 @@ class ScreenTranslatorApp:
 
     def _finish_empty(self) -> None:
         self.busy = False
-        self.status_var.set("未识别到文字，请换一块更清晰的区域重试。")
+        self.status_var.set("未识别到文字。韩文请把源语言选「韩语」后重试。")
 
     def _finish_ok(self, original: str, translated: str) -> None:
         self.busy = False
