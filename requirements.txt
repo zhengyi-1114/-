@@ -4,5 +4,6 @@ rapidocr-onnxruntime>=1.3.24
 opencv-python-headless>=4.8.0
 deep-translator>=1.11.4
 numpy>=1.24.0
+gradio>=4.0.0
 # 可选：全局热键（Linux 需 python3-dev / 头文件）
 # pynput>=1.7.6

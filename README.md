@@ -35,18 +35,28 @@ pip install pynput
 
 ## 使用
 
-### 图形界面
+### 网页界面（云端 / 浏览器推荐）
 
 ```bash
-python main.py
+python main.py --web
+```
+
+浏览器打开提示的地址（默认 `http://127.0.0.1:7860`），上传截图即可识别并翻译。
+
+### 桌面图形界面（本机框选屏幕）
+
+```bash
+python main.py --gui
 # 或
-python -m screen_translator
+python main.py
 ```
 
 1. 点击 **框选翻译**（或按 `Ctrl+Shift+T`）
 2. 拖拽选中屏幕上的文字区域
 3. 左侧显示原文，右侧显示译文
 4. 可点 **复制译文**
+
+> 云端 Agent 里的桌面窗口跑在远程 VNC 上，聊天面板里通常看不到；请用 `--web` 网页版，或在本机运行桌面版。
 
 ### 命令行（图片）
 
@@ -65,11 +75,12 @@ python main.py path/to/image.png -s en -t ja
 
 ```
 screen_translator/
-  app.py          # 图形界面
+  app.py          # 桌面图形界面
+  web.py          # 网页界面（Gradio）
   capture.py      # 截屏与区域框选
   ocr.py          # RapidOCR 识别
   translate.py    # Google 翻译
-  __main__.py     # CLI / GUI 入口
+  __main__.py     # CLI / GUI / Web 入口
 main.py
 requirements.txt
 ```

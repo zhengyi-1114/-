@@ -41,7 +41,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gui",
         action="store_true",
-        help="强制启动图形界面",
+        help="强制启动桌面图形界面",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="启动网页界面（云端推荐，浏览器可访问）",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="网页服务监听地址，默认 0.0.0.0",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="网页服务端口，默认 7860",
     )
     return parser
 
@@ -74,6 +90,12 @@ def run_on_image(path: Path, source: str, target: str, ocr_only: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.web:
+        from screen_translator.web import run_web
+
+        run_web(host=args.host, port=args.port)
+        return 0
 
     if args.gui or not args.image:
         from screen_translator.app import run_app
