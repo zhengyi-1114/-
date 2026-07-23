@@ -16,3 +16,5 @@ page-*.png
 .env
 .env.*
 !.env.example
+webtoon-*.txt
+webtoon-ko-zh-*.txt
