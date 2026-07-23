@@ -156,14 +156,14 @@ def _ai_credentials(backend: str) -> tuple[str, str, str]:
             "DOUBAO_BASE_URL",
             "https://ark.cn-beijing.volces.com/api/v3",
         )
-        model = os.getenv("DOUBAO_MODEL") or os.getenv("OPENAI_MODEL") or ""
+        model = (
+            os.getenv("DOUBAO_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "doubao-seed-translation-250915"
+        )
         if not api_key:
             raise RuntimeError(
                 "豆包未配置 API Key。请设置环境变量 DOUBAO_API_KEY 或 ARK_API_KEY。"
-            )
-        if not model:
-            raise RuntimeError(
-                "豆包未配置模型。请设置 DOUBAO_MODEL 为方舟推理接入点 ID（如 ep-xxxxxxxx）。"
             )
         return api_key, base_url, model
 
@@ -174,6 +174,90 @@ def _ai_credentials(backend: str) -> tuple[str, str, str]:
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY。")
     return api_key, base_url, model
+
+
+def _to_seed_lang(code: str) -> str:
+    """豆包 seed-translation 语言码。"""
+    c = normalize_lang(code)
+    mapping = {
+        "zh-CN": "zh",
+        "zh-TW": "zh",
+        "zh": "zh",
+        "en": "en",
+        "ja": "ja",
+        "ko": "ko",
+        "fr": "fr",
+        "de": "de",
+        "es": "es",
+        "ru": "ru",
+        "pt": "pt",
+        "vi": "vi",
+        "th": "th",
+        "auto": "zh",
+    }
+    return mapping.get(c, c.split("-")[0])
+
+
+def _doubao_seed_translate(
+    text: str,
+    source: str,
+    target: str,
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout: int = 120,
+    retries: int = 3,
+) -> str:
+    """调用豆包 /responses + seed-translation 专用接口。"""
+    url = base_url.rstrip("/") + "/responses"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": text,
+                        "translation_options": {
+                            "source_language": _to_seed_lang(source),
+                            "target_language": _to_seed_lang(target),
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    last_err = ""
+    for attempt in range(retries):
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code < 400:
+            data = resp.json()
+            try:
+                for item in data.get("output", []):
+                    if item.get("type") == "message":
+                        for part in item.get("content", []):
+                            if part.get("type") in {"output_text", "text"} and part.get(
+                                "text"
+                            ):
+                                return str(part["text"]).strip()
+                raise KeyError("no output text")
+            except (KeyError, IndexError, TypeError) as exc:
+                raise RuntimeError(f"豆包翻译返回格式异常: {data}") from exc
+        last_err = f"{resp.status_code}: {resp.text[:300]}"
+        # 瞬时开通/限流类错误重试
+        if resp.status_code in {404, 429, 500, 502, 503}:
+            import time
+
+            time.sleep(0.6 * (attempt + 1))
+            continue
+        break
+    raise RuntimeError(f"豆包翻译接口错误 {last_err}")
 
 
 def _translate_google(text: str, source: str, target: str) -> str:
@@ -207,6 +291,18 @@ def _translate_ai(
     paired: bool = False,
 ) -> str:
     api_key, base_url, model = _ai_credentials(backend)
+
+    # 豆包优先走 seed-translation 专用接口（/responses）
+    if backend == "doubao" and "translation" in model:
+        return _doubao_seed_translate(
+            text,
+            source,
+            target,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )
+
     src_name = _lang_label(source)
     tgt_name = _lang_label(target)
 
@@ -297,7 +393,33 @@ def translate_lines(
                 out[i] = _translate_google(ln, src, tgt)
         return out
 
-    # AI：分批，编号对齐
+    # 豆包 seed-translation：逐行调用，保证一一对应
+    if engine == "doubao":
+        api_key, base_url, model = _ai_credentials("doubao")
+        use_seed = "translation" in model
+        for i, ln in enumerate(cleaned):
+            if not ln:
+                out[i] = ""
+            elif src == tgt:
+                out[i] = ln
+            else:
+                try:
+                    if use_seed:
+                        out[i] = _doubao_seed_translate(
+                            ln,
+                            src,
+                            tgt,
+                            api_key=api_key,
+                            base_url=base_url,
+                            model=model,
+                        )
+                    else:
+                        out[i] = _translate_ai(ln, src, tgt, "doubao", paired=False)
+                except Exception as exc:
+                    out[i] = f"[翻译失败: {exc}]"
+        return out
+
+    # OpenAI 等：分批编号对齐
     for start in range(0, len(cleaned), batch_size):
         chunk = cleaned[start : start + batch_size]
         indexed = []
@@ -328,7 +450,6 @@ def translate_lines(
             row = row.strip()
             if not row:
                 continue
-            # 容忍 `1|译文` / `1. 译文` / `1、译文`
             m = re.match(r"^(\d+)\s*[|\.．、:：)\]]\s*(.*)$", row)
             if not m:
                 continue
