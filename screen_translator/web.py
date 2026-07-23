@@ -8,15 +8,27 @@ import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
 
 from screen_translator.ocr import recognize_text
-from screen_translator.translate import LANGUAGES, translate_text
+from screen_translator.translate import (
+    BACKENDS,
+    LANGUAGES,
+    resolve_backend,
+    translate_lines,
+    translate_text,
+)
 
 LANG_CHOICES = [f"{name} ({code})" for code, name in LANGUAGES.items()]
 CODE_OF = {f"{name} ({code})": code for code, name in LANGUAGES.items()}
 TARGET_CHOICES = [c for c in LANG_CHOICES if not c.endswith("(auto)")]
+BACKEND_CHOICES = [f"{label} ({key})" for key, label in BACKENDS.items()]
+BACKEND_CODE = {f"{label} ({key})": key for key, label in BACKENDS.items()}
 
 
 def _code(label: str, default: str) -> str:
     return CODE_OF.get(label, default)
+
+
+def _backend(label: str) -> str:
+    return BACKEND_CODE.get(label, resolve_backend(None))
 
 
 def _font(path: str, size: int) -> ImageFont.ImageFont:
@@ -40,7 +52,6 @@ def _make_sample_zh() -> Image.Image:
 def _make_sample_ko() -> Image.Image:
     img = Image.new("RGB", (900, 300), "#ffffff")
     draw = ImageDraw.Draw(img)
-    # NanumGothic 对韩文支持更好
     kfont = _font("/usr/share/fonts/truetype/nanum/NanumGothic.ttf", 40)
     draw.text((40, 40), "안녕하세요. 반갑습니다.", fill="#111111", font=kfont)
     draw.text((40, 120), "오늘 날씨가 정말 좋습니다.", fill="#111111", font=kfont)
@@ -52,15 +63,16 @@ def process(
     image: Any,
     source_label: str,
     target_label: str,
+    backend_label: str,
 ) -> tuple[str, str, str]:
     if image is None:
         return "", "", "请先上传或粘贴一张截图。"
 
     source = _code(source_label, "auto")
     target = _code(target_label, "zh-CN")
+    backend = _backend(backend_label)
 
     try:
-        # 源语言选韩语/日语时，强制走对应 OCR 引擎
         original = recognize_text(image, lang=source)
     except Exception as exc:
         return "", "", f"OCR 失败: {type(exc).__name__}: {exc}"
@@ -73,14 +85,22 @@ def process(
         )
 
     try:
-        translated = translate_text(original, source=source, target=target)
+        lines = [ln for ln in original.splitlines() if ln.strip()]
+        # AI 后端用逐行对齐；Google 整段也行，但统一逐行便于对照
+        zh_lines = translate_lines(lines, source=source, target=target, backend=backend)
+        translated = "\n".join(zh_lines)
+        # 额外提供整段结果兜底（空行时）
+        if not translated.strip():
+            translated = translate_text(
+                original, source=source, target=target, backend=backend
+            )
     except Exception as exc:
         return original, "", f"翻译失败: {type(exc).__name__}: {exc}"
 
     return (
         original,
         translated or "",
-        f"完成。源语言={source} → {target}，识别 {len(original)} 字符。",
+        f"完成。后端={backend}，{source} → {target}，{len(lines)} 行。",
     )
 
 
@@ -96,14 +116,23 @@ footer { display: none !important; }
 def build_demo() -> gr.Blocks:
     sample_zh = _make_sample_zh()
     sample_ko = _make_sample_ko()
+    try:
+        default_backend = resolve_backend(None)
+    except Exception:
+        default_backend = "google"
+    default_backend_label = next(
+        (c for c in BACKEND_CHOICES if c.endswith(f"({default_backend})")),
+        BACKEND_CHOICES[0],
+    )
+
     with gr.Blocks(title="屏幕 OCR 翻译") as demo:
         gr.Markdown(
             """
             # 屏幕 OCR 翻译
-            **翻译韩文**：源语言请选「韩语 (ko)」，再上传截图并点「识别并翻译」。  
-            **网漫长图**：支持自动切片识别，但网页上传有大小限制；超长截图更推荐命令行：  
-            `python main.py page.png -s ko -t zh-CN`  
-            首次识别韩文会下载模型，可能需要等待几十秒。
+            **翻译韩文**：源语言选「韩语 (ko)」。  
+            **AI 翻译**：可选 GPT / 豆包（需在环境变量配置 API Key，见 `.env.example`）。  
+            **网漫长图**：超长截图推荐命令行  
+            `python main.py page.png -s ko -t zh-CN --backend doubao`
             """
         )
         with gr.Row():
@@ -128,6 +157,11 @@ def build_demo() -> gr.Blocks:
                     value="中文（简体） (zh-CN)",
                     label="目标语言",
                 )
+                backend = gr.Dropdown(
+                    choices=BACKEND_CHOICES,
+                    value=default_backend_label,
+                    label="翻译后端",
+                )
                 status = gr.Textbox(label="状态", interactive=False)
             with gr.Column(scale=1):
                 original = gr.Textbox(label="原文", lines=12)
@@ -143,7 +177,7 @@ def build_demo() -> gr.Blocks:
         sample_ko_btn.click(fn=load_ko, outputs=[image, source])
         btn.click(
             fn=process,
-            inputs=[image, source, target],
+            inputs=[image, source, target, backend],
             outputs=[original, translated, status],
         )
     return demo

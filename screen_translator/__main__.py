@@ -9,7 +9,22 @@ from pathlib import Path
 from PIL import Image
 
 from screen_translator.ocr import recognize_text
-from screen_translator.translate import LANGUAGES, translate_text
+from screen_translator.translate import BACKENDS, LANGUAGES, translate_lines, translate_text
+
+
+def _load_dotenv() -> None:
+    env_path = Path(".env")
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key and key not in __import__("os").environ:
+            __import__("os").environ[key] = value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +47,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         default="zh-CN",
         help="目标语言代码，默认 zh-CN",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=list(BACKENDS),
+        help="翻译后端: google / openai / doubao（默认读 TRANSLATOR_BACKEND）",
+    )
+    parser.add_argument(
+        "--paired",
+        action="store_true",
+        help="按行输出韩/中（或源/目标）一一对照",
     )
     parser.add_argument(
         "--ocr-only",
@@ -62,7 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_on_image(path: Path, source: str, target: str, ocr_only: bool) -> int:
+def run_on_image(
+    path: Path,
+    source: str,
+    target: str,
+    ocr_only: bool,
+    backend: str | None,
+    paired: bool,
+) -> int:
     if not path.is_file():
         print(f"文件不存在: {path}", file=sys.stderr)
         return 1
@@ -74,20 +107,32 @@ def run_on_image(path: Path, source: str, target: str, ocr_only: bool) -> int:
         print("未识别到文字。", file=sys.stderr)
         return 2
 
-    print("—— 原文 ——")
-    print(text)
-
     if ocr_only:
+        print("—— 原文 ——")
+        print(text)
         return 0
 
+    lines = [ln for ln in text.splitlines() if ln.strip()]
     print("\n正在翻译…", file=sys.stderr)
-    translated = translate_text(text, source=source, target=target)
-    print("—— 译文 ——")
-    print(translated)
+    zh_lines = translate_lines(lines, source=source, target=target, backend=backend)
+
+    if paired:
+        print("—— 对照 ——")
+        for i, (src_ln, dst_ln) in enumerate(zip(lines, zh_lines), 1):
+            print(f"{i:03d}")
+            print(f"原文：{src_ln}")
+            print(f"译文：{dst_ln}")
+            print()
+    else:
+        print("—— 原文 ——")
+        print("\n".join(lines))
+        print("—— 译文 ——")
+        print("\n".join(zh_lines))
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    _load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -108,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
         source=args.source,
         target=args.target,
         ocr_only=args.ocr_only,
+        backend=args.backend,
+        paired=args.paired,
     )
 
 

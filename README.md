@@ -11,6 +11,31 @@
 - **快捷键**：`Ctrl+Shift+T` 开始框选（窗口内；部分系统也支持全局热键）
 - **命令行**：无界面时也可对图片文件 OCR + 翻译
 
+## AI 翻译（GPT / 豆包）
+
+默认仍是 Google（免 Key）。要接入 GPT 或豆包，复制 `.env.example` 为 `.env` 并填写：
+
+```bash
+# GPT
+TRANSLATOR_BACKEND=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+
+# 豆包（火山方舟）
+TRANSLATOR_BACKEND=doubao
+DOUBAO_API_KEY=你的方舟Key
+DOUBAO_MODEL=ep-xxxxxxxx   # 控制台里的推理接入点 ID
+```
+
+命令行也可临时指定：
+
+```bash
+python main.py page.png -s ko -t zh-CN --backend openai --paired
+python main.py page.png -s ko -t zh-CN --backend doubao --paired
+```
+
+任何 OpenAI 兼容接口（DeepSeek、通义、本地 vLLM 等）都可把 `OPENAI_BASE_URL` 指过去。
+
 ## 环境要求
 
 - Python 3.10+

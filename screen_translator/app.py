@@ -11,7 +11,7 @@ from PIL import Image
 
 from screen_translator.capture import Region, RegionSelector, grab_region
 from screen_translator.ocr import recognize_text
-from screen_translator.translate import LANGUAGES, translate_text
+from screen_translator.translate import BACKENDS, LANGUAGES, translate_text
 
 # 配色：深青墨色界面，避免紫/奶油风
 COLORS = {
@@ -37,8 +37,9 @@ class ScreenTranslatorApp:
 
         self.source_var = tk.StringVar(value="auto")
         self.target_var = tk.StringVar(value="zh-CN")
+        self.backend_var = tk.StringVar(value="google")
         self.status_var = tk.StringVar(
-            value="就绪：韩文请选源语言「韩语」，再框选或打开图片"
+            value="就绪：韩文请选源语言「韩语」；AI 翻译需配置 API Key"
         )
         self.busy = False
         self._hotkey_listener = None
@@ -173,8 +174,21 @@ class ScreenTranslatorApp:
             values=target_values,
         )
         self.target_combo.set(self._code_to_display.get("zh-CN", "中文（简体） (zh-CN)"))
-        self.target_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.target_combo.pack(side=tk.LEFT, padx=(6, 16))
         self.target_combo.bind("<<ComboboxSelected>>", self._sync_langs)
+
+        ttk.Label(lang_row, text="翻译后端").pack(side=tk.LEFT)
+        backend_labels = [f"{name} ({code})" for code, name in BACKENDS.items()]
+        self._backend_to_code = {f"{name} ({code})": code for code, name in BACKENDS.items()}
+        self.backend_combo = ttk.Combobox(
+            lang_row,
+            state="readonly",
+            width=28,
+            values=backend_labels,
+        )
+        self.backend_combo.set("Google 翻译（免 Key） (google)")
+        self.backend_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.backend_combo.bind("<<ComboboxSelected>>", self._sync_langs)
 
         # 原文 / 译文
         panes = ttk.Frame(outer, style="TFrame")
@@ -217,8 +231,10 @@ class ScreenTranslatorApp:
     def _sync_langs(self, _event=None) -> None:
         src_label = self.source_combo.get()
         dst_label = self.target_combo.get()
+        backend_label = self.backend_combo.get()
         self.source_var.set(self._display_to_code.get(src_label, "auto"))
         self.target_var.set(self._display_to_code.get(dst_label, "zh-CN"))
+        self.backend_var.set(self._backend_to_code.get(backend_label, "google"))
 
     def _bind_hotkeys(self) -> None:
         # 窗口内快捷键
@@ -306,6 +322,7 @@ class ScreenTranslatorApp:
         self.dst_text.delete("1.0", tk.END)
         source = self.source_var.get()
         target = self.target_var.get()
+        backend = self.backend_var.get()
 
         def worker() -> None:
             try:
@@ -313,7 +330,9 @@ class ScreenTranslatorApp:
                 if not original.strip():
                     self.root.after(0, lambda: self._finish_empty())
                     return
-                translated = translate_text(original, source=source, target=target)
+                translated = translate_text(
+                    original, source=source, target=target, backend=backend
+                )
                 self.root.after(
                     0,
                     lambda: self._finish_ok(original, translated),
