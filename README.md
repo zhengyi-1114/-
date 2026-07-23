@@ -68,9 +68,11 @@ python main.py path/to/image.png
 # 只 OCR
 python main.py path/to/image.png --ocr-only
 
-# 指定语言：英语 → 日语
-python main.py path/to/image.png -s en -t ja
+# 指定语言：韩语 → 中文（支持超长网漫截图，自动切片）
+python main.py page.png -s ko -t zh-CN
 ```
+
+超长全页截图（数万像素高）不要整张塞进网页上传，用上面的命令行更稳。
 
 ## 项目结构
 

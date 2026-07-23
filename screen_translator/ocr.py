@@ -10,6 +10,9 @@ from typing import Any, Optional, Union
 import numpy as np
 from PIL import Image, ImageEnhance, ImageOps
 
+# 允许网页漫画这类超长截图
+Image.MAX_IMAGE_PIXELS = None
+
 ImageInput = Union[Image.Image, np.ndarray, str, Path]
 
 # 源语言 / OCR 语言 → 引擎
@@ -24,6 +27,11 @@ OCR_LANG_ALIASES = {
     "ja": "ja",
     "jp": "ja",
 }
+
+# 超过该高度则切片识别（网页漫画全页截图）
+TALL_IMAGE_THRESHOLD = 2500
+TILE_HEIGHT = 1800
+TILE_OVERLAP = 200
 
 HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
 KANA_RE = re.compile(r"[\u3040-\u30ff]")
@@ -148,11 +156,10 @@ def _run_rapid(image: Image.Image) -> str:
 
 def _run_easy(image: Image.Image, langs: list[str]) -> str:
     reader = _get_easy_reader(",".join(langs))
-    # detail=1 → (bbox, text, conf)
     result = reader.readtext(image_to_numpy(image), detail=1, paragraph=False)
     if not result:
         return ""
-    # 按阅读顺序：先上后下、先左后右
+
     def sort_key(item: Any) -> tuple[float, float]:
         box = item[0]
         ys = [p[1] for p in box]
@@ -186,19 +193,22 @@ def _score_text(text: str, prefer: str = "auto") -> float:
     return score
 
 
+def _ocr_once(image: Image.Image, engine: str) -> str:
+    """单次识别（给超长图切片用，避免每种增强都跑一遍）。"""
+    if engine == "ko":
+        return _run_easy(image, ["ko", "en"])
+    if engine == "ja":
+        return _run_easy(image, ["ja", "en"])
+    return _run_rapid(image)
+
+
 def _recognize_with_engine(image: Image.Image, engine: str) -> str:
     best = ""
     best_score = -1.0
     prefer = engine if engine in {"ko", "ja", "ch"} else "auto"
 
     for i, variant in enumerate(_variants(image)):
-        if engine == "ko":
-            text = _run_easy(variant, ["ko", "en"])
-        elif engine == "ja":
-            text = _run_easy(variant, ["ja", "en"])
-        else:
-            text = _run_rapid(variant)
-
+        text = _ocr_once(variant, engine)
         score = _score_text(text, prefer=prefer)
         if score > best_score:
             best = text
@@ -206,6 +216,55 @@ def _recognize_with_engine(image: Image.Image, engine: str) -> str:
         if i >= 1 and len(best) >= 40 and best_score > 20:
             break
     return best
+
+
+def _iter_tiles(image: Image.Image) -> list[Image.Image]:
+    w, h = image.size
+    if h <= TALL_IMAGE_THRESHOLD:
+        return [image]
+
+    step = max(100, TILE_HEIGHT - TILE_OVERLAP)
+    tiles: list[Image.Image] = []
+    top = 0
+    while top < h:
+        bottom = min(top + TILE_HEIGHT, h)
+        tiles.append(image.crop((0, top, w, bottom)))
+        if bottom >= h:
+            break
+        top += step
+    return tiles
+
+
+def _merge_tile_texts(parts: list[str]) -> str:
+    """合并切片结果，去掉重叠区可能重复的末尾/开头行。"""
+    merged: list[str] = []
+    for part in parts:
+        lines = [ln.strip() for ln in part.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        if not merged:
+            merged.extend(lines)
+            continue
+        max_check = min(6, len(lines), len(merged))
+        overlap = 0
+        for k in range(max_check, 0, -1):
+            if merged[-k:] == lines[:k]:
+                overlap = k
+                break
+        merged.extend(lines[overlap:])
+    return "\n".join(merged)
+
+
+def _recognize_tall(image: Image.Image, engine: str) -> str:
+    parts: list[str] = []
+    for tile in _iter_tiles(image):
+        gray = np.array(ImageOps.grayscale(tile.resize((64, 64))))
+        if float(np.std(gray)) < 8.0:
+            continue
+        text = _ocr_once(tile, engine)
+        if text.strip():
+            parts.append(text.strip())
+    return _merge_tile_texts(parts)
 
 
 def detect_script(text: str) -> str:
@@ -224,7 +283,7 @@ def detect_script(text: str) -> str:
 
 def recognize_text(image: ImageInput, lang: str = "auto") -> str:
     """
-    识别图片文字。
+    识别图片文字。超长图（如网漫全页）会自动切片后识别再合并。
 
     lang:
       - auto: 先中英 RapidOCR，若几乎无有效汉字且像乱码，再尝试韩/日
@@ -232,21 +291,25 @@ def recognize_text(image: ImageInput, lang: str = "auto") -> str:
     """
     img = load_image(image)
     ocr_lang = normalize_ocr_lang(lang)
+    tall = img.height > TALL_IMAGE_THRESHOLD
+
+    def run(engine: str) -> str:
+        if tall:
+            return _recognize_tall(img, engine)
+        return _recognize_with_engine(img, engine)
 
     if ocr_lang == "ko":
-        return _recognize_with_engine(img, "ko")
+        return run("ko")
     if ocr_lang == "ja":
-        return _recognize_with_engine(img, "ja")
+        return run("ja")
     if ocr_lang == "ch":
-        return _recognize_with_engine(img, "ch")
+        return run("ch")
 
-    # auto：中英优先；结果很差时再试韩文（用户场景常见）
-    primary = _recognize_with_engine(img, "ch")
+    primary = run("ch")
     hangul = len(HANGUL_RE.findall(primary))
     cjk = len(CJK_RE.findall(primary))
-    # RapidOCR 对韩文常输出极少/乱码；主动补一刀韩文 OCR
-    if hangul < 2 and cjk < 8 and len(primary) < 80:
-        korean = _recognize_with_engine(img, "ko")
+    if hangul < 2 and cjk < 8 and len(primary) < 80 and not tall:
+        korean = run("ko")
         if _score_text(korean, "ko") > _score_text(primary, "ch"):
             return korean
     return primary

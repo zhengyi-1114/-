@@ -10,5 +10,7 @@ dist/
 .gradio/
 *.png
 *.jpg
+page.png
+page-*.png
 .DS_Store
 .env
