@@ -12,10 +12,11 @@ from screen_translator.ocr import recognize_text
 from screen_translator.translate import BACKENDS, LANGUAGES, translate_lines, translate_text
 
 
-def _load_dotenv() -> None:
+def _load_dotenv(override: bool = True) -> None:
     env_path = Path(".env")
     if not env_path.is_file():
         return
+    environ = __import__("os").environ
     for raw in env_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -23,8 +24,8 @@ def _load_dotenv() -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip("'").strip('"')
-        if key and key not in __import__("os").environ:
-            __import__("os").environ[key] = value
+        if key and (override or key not in environ):
+            environ[key] = value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -58,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--paired",
         action="store_true",
         help="按行输出韩/中（或源/目标）一一对照",
+    )
+    parser.add_argument(
+        "--webtoon",
+        action="store_true",
+        help="网漫模式：气泡定位聚合后再翻译（推荐长截图）",
     )
     parser.add_argument(
         "--ocr-only",
@@ -95,10 +101,31 @@ def run_on_image(
     ocr_only: bool,
     backend: str | None,
     paired: bool,
+    webtoon: bool = False,
 ) -> int:
     if not path.is_file():
         print(f"文件不存在: {path}", file=sys.stderr)
         return 1
+
+    if webtoon:
+        from screen_translator.webtoon import process_webtoon
+
+        print("网漫模式：气泡定位中…", file=sys.stderr)
+        result = process_webtoon(
+            path,
+            source=source if source != "auto" else "ko",
+            target=target,
+            backend=backend or "doubao",
+        )
+        print(
+            f"文本框 {result['boxes']} → 气泡 {result['bubbles']}，"
+            f"译出 {result['translated']}",
+            file=sys.stderr,
+        )
+        print(f"对照: {result['paired_path']}")
+        print(f"预览: {result['preview_path']}")
+        print(Path(result["paired_path"]).read_text(encoding="utf-8")[:3000])
+        return 0
 
     image = Image.open(path)
     print("正在识别文字…", file=sys.stderr)
@@ -132,7 +159,7 @@ def run_on_image(
 
 
 def main(argv: list[str] | None = None) -> int:
-    _load_dotenv()
+    _load_dotenv(override=True)
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -155,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         ocr_only=args.ocr_only,
         backend=args.backend,
         paired=args.paired,
+        webtoon=args.webtoon,
     )
 
 

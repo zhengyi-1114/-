@@ -95,6 +95,9 @@ python main.py path/to/image.png --ocr-only
 
 # 指定语言：韩语 → 中文（支持超长网漫截图，自动切片）
 python main.py page.png -s ko -t zh-CN
+
+# 网漫模式：气泡定位聚合后再翻译（推荐）
+python main.py page.png --webtoon -s ko -t zh-CN --backend doubao
 ```
 
 超长全页截图（数万像素高）不要整张塞进网页上传，用上面的命令行更稳。
