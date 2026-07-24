@@ -80,6 +80,18 @@ from screen_translator.web_capture import capture_webpage, scroll_lazy_load
 capture_webpage(url, out_path="page.png")
 ```
 
+### 网页界面（推荐）
+
+```bash
+python main.py --web
+```
+
+打开后可：
+- **网页链接**：粘贴 Naver 等网漫 URL，自动滚动懒加载截长图并翻译
+- **上传图片**：直接上传截图/长图
+
+默认网漫气泡模式；豆包需在 `.env` 配置 Key。
+
 ### 桌面图形界面（本机框选屏幕）
 
 ```bash
@@ -118,11 +130,14 @@ python main.py page.png --webtoon -s ko -t zh-CN --backend doubao
 ```
 screen_translator/
   app.py          # 桌面图形界面
-  web.py          # 网页界面（Gradio）
+  web.py          # 网页界面（Gradio：链接/图片）
+  web_capture.py  # 懒加载滚屏截图（可复用）
+  webtoon.py      # 网漫气泡定位翻译
   capture.py      # 截屏与区域框选
-  ocr.py          # RapidOCR 识别
-  translate.py    # Google 翻译
+  ocr.py          # RapidOCR / EasyOCR 识别
+  translate.py    # Google / GPT / 豆包翻译
   __main__.py     # CLI / GUI / Web 入口
+capture_page.py   # 懒加载截图命令行入口
 main.py
 requirements.txt
 ```
