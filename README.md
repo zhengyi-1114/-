@@ -63,21 +63,28 @@ pip install pynput
 
 ### 懒加载滚屏截图（可复用）
 
-把网漫/长页面滚到底再截全页：
+默认对 Naver 等网漫会 **下载全部切图再竖向拼接**（避免 full_page 中间空白），并生成：
+
+- 整话长图（超高自动用 PNG）
+- 同名 PDF（方便整话打开）
+- `*-parts/` 分段 JPG + `*-cuts/` 原始切图
 
 ```bash
 python capture_page.py "https://m.comic.naver.com/webtoon/detail?titleId=..." -o page.png
 
 # 等价
 python -m screen_translator.web_capture "https://..." -o page.png
+
+# 强制模式：images=切图拼接（推荐网漫） / scroll=边滚边截 / screenshot=旧全页截图
+python capture_page.py "URL" -o page.png --method images
 ```
 
-常用参数：`--width 800 --wait-ms 350 --max-rounds 220`。  
+常用参数：`--method auto --width 800 --wait-ms 350 --max-rounds 220`。  
 库调用：
 
 ```python
 from screen_translator.web_capture import capture_webpage, scroll_lazy_load
-capture_webpage(url, out_path="page.png")
+capture_webpage(url, out_path="page.png", method="auto")
 ```
 
 ### 网页界面（推荐）
