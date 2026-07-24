@@ -36,6 +36,8 @@ class CaptureResult:
     parts: Optional[list[Path]] = None
     preview_path: Optional[Path] = None
     pdf_path: Optional[Path] = None
+    html_path: Optional[Path] = None
+    zip_path: Optional[Path] = None
     cut_count: int = 0
     cut_paths: list[Path] = field(default_factory=list)
 
@@ -257,16 +259,112 @@ def split_tall_image(
     return parts, preview_path
 
 
+def write_zip_from_files(
+    image_files: Sequence[str | Path],
+    zip_path: str | Path,
+    *,
+    arcname_prefix: str = "cuts",
+    progress: Optional[ProgressCb] = None,
+) -> Path:
+    """把图片打成 ZIP，方便下载到本机解压成普通 JPG/PNG。"""
+    import zipfile
+
+    zip_path = Path(zip_path)
+    files = [Path(p) for p in image_files]
+    if not files:
+        raise ValueError("没有可打包的图片")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in files:
+            zf.write(p, arcname=f"{arcname_prefix}/{p.name}")
+    _log(progress, f"[capture] zip ({len(files)} files) -> {zip_path}")
+    return zip_path
+
+
+def write_pdf_from_files(
+    image_files: Sequence[str | Path],
+    pdf_path: str | Path,
+    *,
+    progress: Optional[ProgressCb] = None,
+) -> Path:
+    """把多张图片写成「一页一张」的 PDF（嵌入原图，避免乱码/糊图）。"""
+    pdf_path = Path(pdf_path)
+    files = [str(Path(p)) for p in image_files]
+    if not files:
+        raise ValueError("没有可用于 PDF 的图片")
+    try:
+        import img2pdf
+
+        pdf_path.write_bytes(img2pdf.convert(files))
+    except Exception:
+        # 回退：Pillow 一页一张（可能更大）
+        from PIL import Image
+
+        pages = [Image.open(p).convert("RGB") for p in files]
+        pages[0].save(pdf_path, save_all=True, append_images=pages[1:])
+        for im in pages:
+            im.close()
+    _log(progress, f"[capture] pdf ({len(files)} pages) -> {pdf_path}")
+    return pdf_path
+
+
+def write_html_viewer(
+    image_files: Sequence[str | Path],
+    html_path: str | Path,
+    *,
+    title: str = "网漫整话预览",
+    progress: Optional[ProgressCb] = None,
+) -> Path:
+    """生成可滚动 HTML，用浏览器打开即可看完整话。"""
+    html_path = Path(html_path)
+    html_dir = html_path.parent.resolve()
+    tags: list[str] = []
+    for p in image_files:
+        p = Path(p).resolve()
+        try:
+            rel = p.relative_to(html_dir).as_posix()
+        except ValueError:
+            rel = p.name
+        tags.append(f'  <img src="{rel}" alt="{p.stem}" loading="lazy" />')
+    html_path.write_text(
+        f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{title}</title>
+<style>
+  body {{ margin:0; background:#111; }}
+  .wrap {{ max-width:720px; margin:0 auto; padding:8px 0 40px; }}
+  h1 {{ color:#eee; font:600 15px/1.4 sans-serif; padding:12px 14px; margin:0; }}
+  img {{ display:block; width:100%; height:auto; background:#fff; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>{title} · 共 {len(image_files)} 张 · 请用浏览器打开本文件</h1>
+{chr(10).join(tags)}
+</div>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+    _log(progress, f"[capture] html -> {html_path}")
+    return html_path
+
+
 def save_long_image(
     image: "Image.Image",
     out_path: Path,
     *,
     also_pdf: bool = True,
+    also_html: bool = True,
     split_when_taller_than: int = 4000,
     part_height: int = 2500,
     progress: Optional[ProgressCb] = None,
-) -> tuple[Path, Optional[Path], Optional[list[Path]], Optional[Path]]:
-    """保存超长图：自动选 PNG/JPG，可选 PDF 与分段。"""
+    skip_giant_raster: bool = False,
+) -> tuple[Path, Optional[Path], Optional[list[Path]], Optional[Path], Optional[Path]]:
+    """保存超长图：分段 JPG + PDF/HTML；超高单图很多查看器打不开。"""
     from PIL import Image
 
     Image.MAX_IMAGE_PIXELS = None
@@ -274,40 +372,72 @@ def save_long_image(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     rgb = image.convert("RGB")
 
-    # 超高图用 PNG（JPEG 约 65500 上限）
-    if rgb.height >= JPEG_MAX_DIM or out_path.suffix.lower() in {".png", ""}:
-        if out_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-            out_path = out_path.with_suffix(".png")
-        if rgb.height >= JPEG_MAX_DIM and out_path.suffix.lower() in {".jpg", ".jpeg"}:
-            out_path = out_path.with_suffix(".png")
-            _log(progress, f"[capture] height={rgb.height} > JPEG limit, save as PNG")
-        if out_path.suffix.lower() == ".png":
-            rgb.save(out_path, optimize=True)
-        else:
-            rgb.save(out_path, quality=92, optimize=True)
-    else:
-        rgb.save(out_path, quality=92, optimize=True)
-
-    pdf_path: Optional[Path] = None
-    if also_pdf:
-        pdf_path = out_path.with_suffix(".pdf")
-        # PDF 按固定条带分页，避免单页过高
-        pages: list[Image.Image] = []
-        band = min(3500, rgb.height)
-        for y in range(0, rgb.height, band):
-            pages.append(rgb.crop((0, y, rgb.width, min(y + band, rgb.height))))
-        pages[0].save(pdf_path, save_all=True, append_images=pages[1:], resolution=150)
-        _log(progress, f"[capture] pdf -> {pdf_path}")
-
     parts: Optional[list[Path]] = None
     preview_path: Optional[Path] = None
+    # 先切段：这是最稳妥的查看方式之一
     if split_when_taller_than > 0 and rgb.height > split_when_taller_than:
+        # 临时落盘再切，避免重复逻辑
+        tmp = out_path.with_name(f".{out_path.stem}.tmp.png")
+        rgb.save(tmp)
         parts, preview_path = split_tall_image(
-            out_path,
+            tmp,
             part_height=part_height,
+            parts_dir=out_path.with_name(f"{out_path.stem}-parts"),
             progress=progress,
         )
-    return out_path, pdf_path, parts, preview_path
+        # 预览文件名对齐到正式 stem
+        desired_preview = out_path.with_name(f"{out_path.stem}-top.jpg")
+        if preview_path != desired_preview and preview_path.is_file():
+            preview_path.replace(desired_preview)
+            preview_path = desired_preview
+        tmp.unlink(missing_ok=True)
+
+    written_raster = False
+    if not skip_giant_raster:
+        if rgb.height >= JPEG_MAX_DIM or out_path.suffix.lower() in {".png", ""}:
+            if out_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+                out_path = out_path.with_suffix(".png")
+            if rgb.height >= JPEG_MAX_DIM and out_path.suffix.lower() in {".jpg", ".jpeg"}:
+                out_path = out_path.with_suffix(".png")
+                _log(progress, f"[capture] height={rgb.height} > JPEG limit, save as PNG")
+            if out_path.suffix.lower() == ".png":
+                rgb.save(out_path, optimize=True)
+            else:
+                rgb.save(out_path, quality=92, optimize=True)
+            written_raster = True
+        else:
+            rgb.save(out_path, quality=92, optimize=True)
+            written_raster = True
+    else:
+        _log(progress, "[capture] skip giant single image (use PDF/HTML/parts instead)")
+        # 若未写长图，用第一段作为 path 占位不合适；仍写 PNG 供程序读取，但标注很大
+        # 程序侧仍需要整图时再写
+        if out_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            out_path = out_path.with_suffix(".png")
+        rgb.save(out_path, optimize=True)
+        written_raster = True
+
+    pdf_path: Optional[Path] = None
+    html_path: Optional[Path] = None
+    view_files: list[Path] = list(parts or [])
+    if not view_files:
+        # 无分段时用整图
+        if written_raster:
+            view_files = [out_path]
+
+    if also_pdf and view_files:
+        pdf_path = write_pdf_from_files(
+            view_files, out_path.with_suffix(".pdf"), progress=progress
+        )
+    if also_html and view_files:
+        html_path = write_html_viewer(
+            view_files,
+            out_path.with_suffix(".html"),
+            title=out_path.stem,
+            progress=progress,
+        )
+
+    return out_path, pdf_path, parts, preview_path, html_path
 
 
 def capture_by_comic_images(
@@ -319,8 +449,10 @@ def capture_by_comic_images(
     progress: Optional[ProgressCb] = None,
     split_when_taller_than: int = 4000,
     part_height: int = 2500,
-    also_pdf: bool = True,
+    also_pdf: bool = False,
+    also_html: bool = False,
     save_cuts: bool = True,
+    also_zip: bool = True,
 ) -> CaptureResult:
     """下载页面内网漫切图并竖向拼接（最完整、无空白）。"""
     from PIL import Image
@@ -336,6 +468,9 @@ def capture_by_comic_images(
 
     cuts_dir = out_path.with_name(f"{out_path.stem}-cuts")
     if save_cuts:
+        if cuts_dir.exists():
+            for old in cuts_dir.glob("*"):
+                old.unlink()
         cuts_dir.mkdir(parents=True, exist_ok=True)
 
     images: list[Image.Image] = []
@@ -345,25 +480,64 @@ def capture_by_comic_images(
         im = Image.open(BytesIO(data)).convert("RGB")
         images.append(im)
         if save_cuts:
-            # 保留原始切图，便于查看/重拼
             ext = ".jpg"
             if ".png" in u.lower():
                 ext = ".png"
             cut_path = cuts_dir / f"{i:03d}{ext}"
-            im.save(cut_path, quality=92 if ext == ".jpg" else None)
+            if ext == ".jpg":
+                im.save(cut_path, quality=92, optimize=True)
+            else:
+                im.save(cut_path)
             cut_paths.append(cut_path)
         if i == 1 or i == len(urls) or i % 10 == 0:
             _log(progress, f"[capture] downloaded {i}/{len(urls)} {im.size}")
 
     canvas = stitch_images(images)
-    out_path, pdf_path, parts, preview_path = save_long_image(
+
+    # 本机保存优先：ZIP（普通 JPG 切图），PDF/HTML 可选
+    zip_path: Optional[Path] = None
+    pdf_path: Optional[Path] = None
+    html_path: Optional[Path] = None
+    if also_zip and cut_paths:
+        zip_path = write_zip_from_files(
+            cut_paths,
+            out_path.with_suffix(".zip"),
+            arcname_prefix=f"{out_path.stem}-cuts",
+            progress=progress,
+        )
+    if also_pdf and cut_paths:
+        pdf_path = write_pdf_from_files(
+            cut_paths, out_path.with_suffix(".pdf"), progress=progress
+        )
+    if also_html and cut_paths:
+        html_path = write_html_viewer(
+            cut_paths,
+            out_path.with_suffix(".html"),
+            title=f"{out_path.stem}（{len(cut_paths)} 切）",
+            progress=progress,
+        )
+
+    out_path, _pdf2, parts, preview_path, _html2 = save_long_image(
         canvas,
         out_path,
-        also_pdf=also_pdf,
+        also_pdf=False,
+        also_html=False,
         split_when_taller_than=split_when_taller_than,
         part_height=part_height,
         progress=progress,
     )
+    if pdf_path is None:
+        pdf_path = _pdf2
+    if html_path is None:
+        html_path = _html2
+    if zip_path is None and parts:
+        zip_path = write_zip_from_files(
+            parts,
+            Path(out_path).with_suffix(".zip"),
+            arcname_prefix=f"{Path(out_path).stem}-parts",
+            progress=progress,
+        )
+
     return CaptureResult(
         path=out_path,
         url=page_url,
@@ -376,6 +550,8 @@ def capture_by_comic_images(
         parts=parts,
         preview_path=preview_path,
         pdf_path=pdf_path,
+        html_path=html_path,
+        zip_path=zip_path,
         cut_count=len(urls),
         cut_paths=cut_paths,
     )
@@ -392,7 +568,9 @@ def capture_by_scroll_stitch(
     progress: Optional[ProgressCb] = None,
     split_when_taller_than: int = 4000,
     part_height: int = 2500,
-    also_pdf: bool = True,
+    also_pdf: bool = False,
+    also_html: bool = False,
+    also_zip: bool = True,
 ) -> CaptureResult:
     """边滚边截视口，再竖向去重叠拼接（通用站点，比 full_page 更完整）。"""
     from PIL import Image
@@ -454,14 +632,23 @@ def capture_by_scroll_stitch(
         page.wait_for_timeout(wait_ms)
 
     canvas = stitch_images(strips)
-    out_path, pdf_path, parts, preview_path = save_long_image(
+    out_path, pdf_path, parts, preview_path, html_path = save_long_image(
         canvas,
         out_path,
         also_pdf=also_pdf,
+        also_html=also_html,
         split_when_taller_than=split_when_taller_than,
         part_height=part_height,
         progress=progress,
     )
+    zip_path = None
+    if also_zip and parts:
+        zip_path = write_zip_from_files(
+            parts,
+            Path(out_path).with_suffix(".zip"),
+            arcname_prefix=f"{Path(out_path).stem}-parts",
+            progress=progress,
+        )
     return CaptureResult(
         path=out_path,
         url=page_url,
@@ -474,6 +661,8 @@ def capture_by_scroll_stitch(
         parts=parts,
         preview_path=preview_path,
         pdf_path=pdf_path,
+        html_path=html_path,
+        zip_path=zip_path,
     )
 
 
@@ -494,7 +683,9 @@ def capture_webpage(
     split_when_taller_than: int = 4000,
     part_height: int = 2500,
     method: str = "auto",
-    also_pdf: bool = True,
+    also_pdf: bool = False,
+    also_html: bool = False,
+    also_zip: bool = True,
 ) -> CaptureResult:
     """
     打开网页并保存长图。
@@ -571,6 +762,8 @@ def capture_webpage(
                     split_when_taller_than=split_when_taller_than,
                     part_height=part_height,
                     also_pdf=also_pdf,
+                    also_html=also_html,
+                    also_zip=also_zip,
                 )
                 result.scroll_rounds = rounds
                 result.final_page_height = page_height
@@ -585,6 +778,8 @@ def capture_webpage(
                     split_when_taller_than=split_when_taller_than,
                     part_height=part_height,
                     also_pdf=also_pdf,
+                    also_html=also_html,
+                    also_zip=also_zip,
                 )
             else:
                 # 旧逻辑：全页截图（可能中间空白）
@@ -622,10 +817,11 @@ def capture_webpage(
                 parts = None
                 preview_path = None
                 pdf_path = None
+                html_path = None
                 if split_when_taller_than > 0 and img_h > split_when_taller_than:
                     # 转存为更稳妥的长图产物
                     with Image.open(out_path) as im:
-                        out_path2, pdf_path, parts, preview_path = save_long_image(
+                        out_path2, pdf_path, parts, preview_path, html_path = save_long_image(
                             im,
                             out_path,
                             also_pdf=also_pdf,
@@ -647,6 +843,7 @@ def capture_webpage(
                     parts=parts,
                     preview_path=preview_path,
                     pdf_path=pdf_path,
+                    html_path=html_path,
                 )
         finally:
             browser.close()
@@ -704,9 +901,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="关闭超长图自动切段（默认高度>4000 会切成 JPG 分段）",
     )
     p.add_argument(
-        "--no-pdf",
+        "--pdf",
         action="store_true",
-        help="不生成 PDF（默认会生成同名 .pdf，方便整话打开）",
+        help="额外生成 PDF（默认不生成；推荐直接下 ZIP 到本机）",
+    )
+    p.add_argument(
+        "--html",
+        action="store_true",
+        help="额外生成 HTML 预览（默认不生成）",
+    )
+    p.add_argument(
+        "--no-zip",
+        action="store_true",
+        help="不打包 ZIP（默认会生成同名 .zip，内含普通 JPG 切图）",
     )
     p.add_argument(
         "--part-height",
@@ -735,21 +942,28 @@ def main(argv: Optional[list[str]] = None) -> int:
             split_when_taller_than=0 if args.no_split else 4000,
             part_height=args.part_height,
             method=args.method,
-            also_pdf=not args.no_pdf,
+            also_pdf=args.pdf,
+            also_html=args.html,
+            also_zip=not args.no_zip,
         )
     except Exception as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 1
 
-    print(result.path)
-    if result.pdf_path:
-        print(result.pdf_path)
-    if result.preview_path:
-        print(result.preview_path)
-    if result.parts:
-        print(result.parts[0].parent)
+    # 优先打印本机可下载的 ZIP
+    if result.zip_path:
+        print(result.zip_path)
     if result.cut_paths:
         print(result.cut_paths[0].parent)
+    if result.parts:
+        print(result.parts[0].parent)
+    print(result.path)
+    if result.preview_path:
+        print(result.preview_path)
+    if result.pdf_path:
+        print(result.pdf_path)
+    if result.html_path:
+        print(result.html_path)
     return 0
 
 

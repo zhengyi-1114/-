@@ -198,31 +198,78 @@ def process_url(
     backend_label: str,
     mode: str,
     full_page: bool,
-) -> tuple[Optional[Image.Image], str, Optional[Image.Image], str]:
+) -> tuple[Optional[Image.Image], str, Optional[Image.Image], str, Optional[str]]:
     try:
         if not url or not url.strip():
-            return None, "", None, "请输入网页链接。"
+            return None, "", None, "请输入网页链接。", None
         source = _code(source_label, "ko")
         target = _code(target_label, "zh-CN")
         backend = _backend(backend_label)
 
-        shot = Path(tempfile.mkstemp(prefix="web_", suffix=".png")[1])
-        capture_webpage(url.strip(), out_path=shot)
-        full = Image.open(shot)
+        out_dir = Path(tempfile.mkdtemp(prefix="web_cap_"))
+        shot = out_dir / "page.png"
+        result = capture_webpage(
+            url.strip(),
+            out_path=shot,
+            also_pdf=False,
+            also_html=False,
+            also_zip=True,
+        )
+        Image.MAX_IMAGE_PIXELS = None
+        full = Image.open(result.path)
         preview_src = _for_display(full, max_height=2200)
 
         paired, preview, status = _run_pipeline(
-            shot,
+            result.path,
             source=source,
             target=target,
             backend=backend,
             mode=mode,
             full_page=full_page,
         )
-        status = f"已截取网页 {full.size[0]}x{full.size[1]}。{status}"
-        return preview_src, paired, preview, status
+        zip_file = str(result.zip_path) if result.zip_path else None
+        extra = ""
+        if zip_file:
+            extra = f" 可下载 ZIP（{result.cut_count or (len(result.parts or []) )} 张 JPG）到本机解压。"
+        status = f"已截取网页 {full.size[0]}x{full.size[1]}。{status}{extra}"
+        return preview_src, paired, preview, status, zip_file
     except Exception as exc:
-        return None, "", None, f"失败: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-500:]}"
+        return None, "", None, f"失败: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-500:]}", None
+
+
+def save_url_images(url: str) -> tuple[Optional[Image.Image], Optional[str], str]:
+    """只抓图打包 ZIP，方便下载到本机；不翻译。"""
+    try:
+        if not url or not url.strip():
+            return None, None, "请输入网页链接。"
+        out_dir = Path(tempfile.mkdtemp(prefix="web_save_"))
+        shot = out_dir / "page.png"
+        result = capture_webpage(
+            url.strip(),
+            out_path=shot,
+            method="auto",
+            also_pdf=False,
+            also_html=False,
+            also_zip=True,
+        )
+        Image.MAX_IMAGE_PIXELS = None
+        preview = _for_display(Image.open(result.path), max_height=2200)
+        zip_file = str(result.zip_path) if result.zip_path else None
+        if not zip_file and result.cut_paths:
+            from screen_translator.web_capture import write_zip_from_files
+
+            zip_path = out_dir / "page.zip"
+            write_zip_from_files(result.cut_paths, zip_path)
+            zip_file = str(zip_path)
+        n = result.cut_count or len(result.parts or [])
+        status = (
+            f"已保存 {n} 张普通图片到 ZIP。点击下方文件下载到电脑，解压后即可用看图软件打开。"
+            if zip_file
+            else f"已抓取 {result.width}x{result.height}，但未生成 ZIP。"
+        )
+        return preview, zip_file, status
+    except Exception as exc:
+        return None, None, f"失败: {type(exc).__name__}: {exc}\n{traceback.format_exc()[-500:]}"
 
 
 CUSTOM_CSS = """
@@ -247,10 +294,11 @@ def build_demo() -> gr.Blocks:
             """
             # 屏幕 / 网漫 OCR 翻译
             支持两种输入：
-            1. **网页链接**（自动滚动懒加载并截长图，适合 Naver 网漫）
+            1. **网页链接**（自动下载网漫切图；可打包 ZIP 下载到本机）
             2. **直接上传图片**
             
-            推荐开启「网漫气泡模式」+ 豆包翻译。
+            推荐开启「网漫气泡模式」+ 豆包翻译。  
+            想只要图片：用「只保存图片到电脑」→ 下载 ZIP → 解压得到普通 JPG。
             """
         )
 
@@ -294,7 +342,13 @@ def build_demo() -> gr.Blocks:
                 placeholder="https://m.comic.naver.com/webtoon/detail?titleId=...",
                 lines=2,
             )
-            url_btn = gr.Button("抓取并翻译", variant="primary")
+            with gr.Row():
+                save_btn = gr.Button("只保存图片到电脑（ZIP）", variant="secondary")
+                url_btn = gr.Button("抓取并翻译", variant="primary")
+            zip_file = gr.File(
+                label="下载到本机（ZIP 内为普通 JPG，解压即可看）",
+                file_count="single",
+            )
             with gr.Row():
                 page_preview = gr.Image(
                     label="网页截图预览（顶部）",
@@ -317,10 +371,15 @@ def build_demo() -> gr.Blocks:
             inputs=[image, source, target, backend, mode, full_page],
             outputs=[img_out, img_preview, img_status],
         )
+        save_btn.click(
+            fn=save_url_images,
+            inputs=[url],
+            outputs=[page_preview, zip_file, url_status],
+        )
         url_btn.click(
             fn=process_url,
             inputs=[url, source, target, backend, mode, full_page],
-            outputs=[page_preview, url_out, bubble_preview, url_status],
+            outputs=[page_preview, url_out, bubble_preview, url_status, zip_file],
         )
 
     return demo

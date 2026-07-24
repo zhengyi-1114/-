@@ -63,11 +63,14 @@ pip install pynput
 
 ### 懒加载滚屏截图（可复用）
 
-默认对 Naver 等网漫会 **下载全部切图再竖向拼接**（避免 full_page 中间空白），并生成：
+默认对 Naver 等网漫会 **下载全部切图再竖向拼接**，并生成：
 
-- 整话长图（超高自动用 PNG）
-- 同名 PDF（方便整话打开）
-- `*-parts/` 分段 JPG + `*-cuts/` 原始切图
+- **同名 `.zip`（推荐）**：里面是普通 JPG 切图，下载到电脑解压即可用看图软件打开
+- `*-cuts/` 原始切图文件夹
+- `*-parts/` 分段 JPG
+- 整张长图 PNG（很多查看器打不开，仅供程序处理）
+
+可选：加 `--pdf` / `--html` 才额外生成 PDF/HTML。
 
 ```bash
 python capture_page.py "https://m.comic.naver.com/webtoon/detail?titleId=..." -o page.png
