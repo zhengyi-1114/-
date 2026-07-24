@@ -335,7 +335,7 @@ def render_preview(
     image: Image.Image,
     bubbles: list[Bubble],
     out_path: Path,
-    max_height: int = 4000,
+    max_height: int = 1800,
 ) -> Path:
     """导出带气泡框和译文的预览条（页面顶部一段）。"""
     h = min(image.height, max_height)

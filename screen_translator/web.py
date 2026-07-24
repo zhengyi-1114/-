@@ -56,15 +56,52 @@ def _make_sample_ko() -> Image.Image:
     return img
 
 
+def _for_display(image: Optional[Image.Image], max_height: int = 1800) -> Optional[Image.Image]:
+    """压缩预览图，避免超长图在网页里空白/崩溃。"""
+    if image is None:
+        return None
+    img = image.convert("RGB")
+    w, h = img.size
+    if h > max_height:
+        img = img.crop((0, 0, w, max_height))
+    # 再限制宽度，方便手机端
+    if img.width > 1000:
+        nh = int(img.height * 1000 / img.width)
+        img = img.resize((1000, nh), Image.Resampling.LANCZOS)
+    return img
+
+
 def _save_upload(image: Any) -> Path:
     if image is None:
         raise ValueError("请先上传图片")
+
+    # Gradio 6 可能给 filepath / numpy / PIL / dict
+    if isinstance(image, dict):
+        path = image.get("path") or image.get("name")
+        if path:
+            return Path(path)
+        raise ValueError("无法读取上传图片路径")
+    if isinstance(image, (str, Path)):
+        return Path(image)
+
+    import numpy as np
+
+    if isinstance(image, np.ndarray):
+        arr = image
+        if arr.dtype != np.uint8:
+            max_v = float(arr.max()) if arr.size else 0
+            arr = (
+                (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+                if max_v <= 1.0
+                else np.clip(arr, 0, 255).astype(np.uint8)
+            )
+        image = Image.fromarray(arr)
+
     if isinstance(image, Image.Image):
+        Image.MAX_IMAGE_PIXELS = None
         path = Path(tempfile.mkstemp(prefix="ocr_", suffix=".png")[1])
         image.convert("RGB").save(path)
         return path
-    if isinstance(image, str):
-        return Path(image)
     raise TypeError(f"不支持的图片类型: {type(image)}")
 
 
@@ -105,7 +142,7 @@ def _run_pipeline(
         preview = None
         preview_path = Path(result["preview_path"])
         if preview_path.is_file():
-            preview = Image.open(preview_path)
+            preview = _for_display(Image.open(preview_path))
         status = (
             f"完成（气泡模式）。{trim_note}。文本框 {result['boxes']} → 气泡 {result['bubbles']}，"
             f"译出 {result['translated']}。后端={backend}"
@@ -125,10 +162,9 @@ def _run_pipeline(
         blocks.append("")
     return (
         "\n".join(blocks),
-        Image.open(image_path),
+        _for_display(Image.open(image_path)),
         f"完成（普通模式）。{trim_note}。{len(lines)} 行，后端={backend}",
     )
-
 
 def process_image(
     image: Any,
@@ -173,7 +209,7 @@ def process_url(
         shot = Path(tempfile.mkstemp(prefix="web_", suffix=".png")[1])
         capture_webpage(url.strip(), out_path=shot)
         full = Image.open(shot)
-        preview_src = full if full.height <= 3000 else full.crop((0, 0, full.width, 3000))
+        preview_src = _for_display(full, max_height=2200)
 
         paired, preview, status = _run_pipeline(
             shot,
@@ -232,6 +268,26 @@ def build_demo() -> gr.Blocks:
                 value=False,
             )
 
+        with gr.Tab("上传图片"):
+            image = gr.Image(
+                type="pil",
+                label="截图 / 网漫长图",
+                sources=["upload", "clipboard"],
+                height=420,
+                image_mode="RGB",
+            )
+            with gr.Row():
+                sample_btn = gr.Button("填入韩文示例")
+                img_btn = gr.Button("识别并翻译", variant="primary")
+            img_preview = gr.Image(
+                label="预览（过长只显示顶部）",
+                type="pil",
+                height=480,
+                image_mode="RGB",
+            )
+            img_out = gr.Textbox(label="韩中对照", lines=22)
+            img_status = gr.Textbox(label="状态", interactive=False)
+
         with gr.Tab("网页链接"):
             url = gr.Textbox(
                 label="网页 URL",
@@ -240,24 +296,20 @@ def build_demo() -> gr.Blocks:
             )
             url_btn = gr.Button("抓取并翻译", variant="primary")
             with gr.Row():
-                page_preview = gr.Image(label="网页截图预览（顶部）", height=420)
-                bubble_preview = gr.Image(label="气泡定位预览", height=420)
+                page_preview = gr.Image(
+                    label="网页截图预览（顶部）",
+                    type="pil",
+                    height=480,
+                    image_mode="RGB",
+                )
+                bubble_preview = gr.Image(
+                    label="气泡定位预览",
+                    type="pil",
+                    height=480,
+                    image_mode="RGB",
+                )
             url_out = gr.Textbox(label="韩中对照", lines=22)
             url_status = gr.Textbox(label="状态", interactive=False)
-
-        with gr.Tab("上传图片"):
-            image = gr.Image(
-                type="pil",
-                label="截图 / 网漫长图",
-                sources=["upload", "clipboard"],
-                height=360,
-            )
-            with gr.Row():
-                sample_btn = gr.Button("填入韩文示例")
-                img_btn = gr.Button("识别并翻译", variant="primary")
-            img_preview = gr.Image(label="预览", height=420)
-            img_out = gr.Textbox(label="韩中对照", lines=22)
-            img_status = gr.Textbox(label="状态", interactive=False)
 
         sample_btn.click(fn=lambda: sample, outputs=image)
         img_btn.click(
