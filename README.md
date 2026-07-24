@@ -61,17 +61,24 @@ pip install pynput
 
 ## 使用
 
-### 网页界面（推荐）
+### 懒加载滚屏截图（可复用）
+
+把网漫/长页面滚到底再截全页：
 
 ```bash
-python main.py --web
+python capture_page.py "https://m.comic.naver.com/webtoon/detail?titleId=..." -o page.png
+
+# 等价
+python -m screen_translator.web_capture "https://..." -o page.png
 ```
 
-打开后可：
-- **网页链接**：粘贴 Naver 等网漫 URL，自动滚动懒加载截长图并翻译
-- **上传图片**：直接上传截图/长图
+常用参数：`--width 800 --wait-ms 350 --max-rounds 220`。  
+库调用：
 
-默认网漫气泡模式；豆包需在 `.env` 配置 Key。
+```python
+from screen_translator.web_capture import capture_webpage, scroll_lazy_load
+capture_webpage(url, out_path="page.png")
+```
 
 ### 桌面图形界面（本机框选屏幕）
 
