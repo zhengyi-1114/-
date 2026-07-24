@@ -23,11 +23,51 @@ class CaptureResult:
     scroll_rounds: int
     final_page_height: int
     file_size: int
+    parts: Optional[list[Path]] = None
+    preview_path: Optional[Path] = None
 
 
 def _log(cb: Optional[ProgressCb], msg: str) -> None:
     if cb:
         cb(msg)
+
+
+def split_tall_image(
+    image_path: str | Path,
+    *,
+    part_height: int = 2500,
+    parts_dir: Optional[str | Path] = None,
+    preview_height: int = 1800,
+    quality: int = 88,
+    progress: Optional[ProgressCb] = None,
+) -> tuple[list[Path], Path]:
+    """把超长图切成多段 JPG，并另存顶部预览，方便普通查看器打开。"""
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    src = Path(image_path)
+    out_dir = Path(parts_dir) if parts_dir else src.with_name(f"{src.stem}-parts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(src) as im:
+        rgb = im.convert("RGB")
+        w, h = rgb.size
+        parts: list[Path] = []
+        idx = 1
+        for y in range(0, h, part_height):
+            crop = rgb.crop((0, y, w, min(y + part_height, h)))
+            part_path = out_dir / f"part-{idx:02d}.jpg"
+            crop.save(part_path, quality=quality, optimize=True)
+            parts.append(part_path)
+            idx += 1
+
+        preview = rgb.crop((0, 0, w, min(preview_height, h)))
+        preview_path = src.with_name(f"{src.stem}-top.jpg")
+        preview.save(preview_path, quality=90, optimize=True)
+
+    _log(progress, f"[capture] split {len(parts)} parts -> {out_dir}")
+    _log(progress, f"[capture] preview -> {preview_path}")
+    return parts, preview_path
 
 
 def _validate_url(url: str) -> str:
@@ -141,11 +181,14 @@ def capture_webpage(
     timeout_ms: int = 90000,
     dismiss: Sequence[str] = DEFAULT_DISMISS,
     progress: Optional[ProgressCb] = None,
+    split_when_taller_than: int = 4000,
+    part_height: int = 2500,
 ) -> CaptureResult:
     """
     打开网页 → 懒加载滚屏 → 全页截图。
 
     可被其他模块直接调用；也可通过本文件 CLI 使用。
+    超长图（默认高度 > 4000）会自动切段并生成顶部预览。
     """
     from playwright.sync_api import sync_playwright
 
@@ -185,6 +228,15 @@ def capture_webpage(
     except Exception:
         img_w, img_h = width, page_height
 
+    parts: Optional[list[Path]] = None
+    preview_path: Optional[Path] = None
+    if split_when_taller_than > 0 and img_h > split_when_taller_than:
+        parts, preview_path = split_tall_image(
+            out_path,
+            part_height=part_height,
+            progress=progress,
+        )
+
     result = CaptureResult(
         path=out_path,
         url=url,
@@ -193,6 +245,8 @@ def capture_webpage(
         scroll_rounds=rounds,
         final_page_height=page_height,
         file_size=out_path.stat().st_size,
+        parts=parts,
+        preview_path=preview_path,
     )
     _log(
         progress,
@@ -231,6 +285,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--headed", action="store_true", help="有界面模式（调试用）")
     p.add_argument("--quiet", action="store_true", help="少打印进度")
+    p.add_argument(
+        "--no-split",
+        action="store_true",
+        help="关闭超长图自动切段（默认高度>4000 会切成 JPG 分段）",
+    )
+    p.add_argument(
+        "--part-height",
+        type=int,
+        default=2500,
+        help="切段高度（像素），默认 2500",
+    )
     return p
 
 
@@ -249,12 +314,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             stable_rounds=args.stable_rounds,
             headless=not args.headed,
             progress=progress,
+            split_when_taller_than=0 if args.no_split else 4000,
+            part_height=args.part_height,
         )
     except Exception as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 1
 
     print(result.path)
+    if result.preview_path:
+        print(result.preview_path)
+    if result.parts:
+        print(result.parts[0].parent)
     return 0
 
 
