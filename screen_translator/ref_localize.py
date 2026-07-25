@@ -205,6 +205,93 @@ def align_by_order(
     return pairs
 
 
+def align_by_mt_bridge(
+    ko_items: list[LineItem],
+    zh_items: list[LineItem],
+    *,
+    bridge_backend: str = "google",
+    min_score: float = 0.28,
+    window: int = 12,
+    progress: Optional[ProgressCb] = None,
+) -> list[AlignedPair]:
+    """机译桥接：韩文→机译中文→模糊匹配汉化站 OCR。"""
+    from difflib import SequenceMatcher
+
+    from screen_translator.translate import translate_text
+
+    zh_items = [
+        z
+        for z in zh_items
+        if z.text.strip() and not re.search(r"未经授权|法律责任|版权所有", z.text)
+    ]
+    if not ko_items:
+        return []
+    if not zh_items:
+        return align_by_order(ko_items, [])
+
+    pairs: list[AlignedPair] = []
+    used: set[int] = set()
+    n_ko, n_zh = len(ko_items), len(zh_items)
+
+    for i, k in enumerate(ko_items):
+        try:
+            mt = translate_text(
+                k.text, source="ko", target="zh-CN", backend=bridge_backend
+            )
+        except Exception as exc:
+            _log(progress, f"[bridge] mt fail #{i+1}: {exc}")
+            mt = ""
+
+        center = int(i * (n_zh - 1) / max(1, n_ko - 1)) if n_ko > 1 else 0
+        best_j = None
+        best_r = 0.0
+        mt_flat = mt.replace("\n", "")
+        for j in range(max(0, center - window), min(n_zh, center + window + 1)):
+            if j in used and len(zh_items[j].text) > 6:
+                continue
+            zh_flat = zh_items[j].text.replace("\n", "")
+            r = SequenceMatcher(None, mt_flat, zh_flat).ratio()
+            a, b = set(mt_flat), set(zh_flat)
+            if a and b:
+                r = max(r, len(a & b) / max(1, len(a | b)) * 0.9)
+            if r > best_r:
+                best_r = r
+                best_j = j
+
+        if best_j is not None and best_r >= min_score:
+            z = zh_items[best_j]
+            used.add(best_j)
+            pairs.append(
+                AlignedPair(
+                    index=i + 1,
+                    ko=k.text,
+                    zh_ref=z.text,
+                    zh_mt=mt,
+                    source="ref",
+                    ko_cut=k.cut,
+                    zh_cut=z.cut,
+                )
+            )
+        else:
+            z = zh_items[max(0, min(n_zh - 1, center))]
+            pairs.append(
+                AlignedPair(
+                    index=i + 1,
+                    ko=k.text,
+                    zh_ref=z.text,
+                    zh_mt=mt,
+                    source="approx",
+                    ko_cut=k.cut,
+                    zh_cut=z.cut,
+                )
+            )
+
+        if i == 0 or (i + 1) % 15 == 0 or i + 1 == n_ko:
+            _log(progress, f"[bridge] {i+1}/{n_ko}")
+
+    return pairs
+
+
 def fill_mt(
     pairs: list[AlignedPair],
     *,
@@ -212,29 +299,29 @@ def fill_mt(
     progress: Optional[ProgressCb] = None,
     every: int = 1,
 ) -> list[AlignedPair]:
-    """对每个韩文气泡机翻，便于和参考汉化对照；参考为空时用机译顶上。"""
+    """补充机译字段（若桥接阶段未写入）。"""
     from screen_translator.translate import translate_text
 
     for i, p in enumerate(pairs, 1):
         if not p.ko.strip():
             continue
+        if p.zh_mt.strip():
+            continue
         if every > 1 and (i % every) != 0 and p.zh_ref:
             continue
         try:
-            # 带参考译文提示的通用翻译：seed-translation 不吃上下文，故直接译原文
             mt = translate_text(p.ko, source="ko", target="zh-CN", backend=backend)
             p.zh_mt = mt
             if not p.zh_ref.strip():
                 p.zh_ref = mt
                 p.source = "mt"
-            else:
+            elif p.source == "ref":
                 p.source = "mixed"
         except Exception as exc:
             _log(progress, f"[mt] fail #{i}: {exc}")
         if i == 1 or i % 10 == 0 or i == len(pairs):
             _log(progress, f"[mt] {i}/{len(pairs)}")
     return pairs
-
 
 def write_outputs(
     pairs: list[AlignedPair],
