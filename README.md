@@ -72,6 +72,22 @@ pip install pynput
 
 可选：加 `--pdf` / `--html` 才额外生成 PDF/HTML。
 
+### 双语站对照汉化
+
+若同时有「未汉化」和「已汉化」同一话链接，可先各自抓切图，再对齐：
+
+```bash
+# 1) 两边都抓成 cuts（Naver / 咚漫均支持）
+python capture_page.py "韩文URL" -o ep-ko.png --method images
+python capture_page.py "汉化URL" -o ep-zh.png --method images
+
+# 2) OCR + 机译桥接对齐汉化站文本
+python -m screen_translator.ref_localize \
+  --ko-cuts ep-ko-cuts --zh-cuts ep-zh-cuts -o ep-ref --method bridge
+```
+
+输出 `ep-ref-对照.txt`：每条含原文 / 汉化参考 / 机译对照。短语气气泡可能对不齐，长对白一般可用。
+
 ```bash
 python capture_page.py "https://m.comic.naver.com/webtoon/detail?titleId=..." -o page.png
 

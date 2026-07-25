@@ -150,24 +150,28 @@ def collect_comic_image_urls(page) -> list[str]:
         """
         () => {
           const nodes = Array.from(
-            document.querySelectorAll('img.toon_image, img[id^=toon_], .wt_viewer img, #comic_view img')
+            document.querySelectorAll(
+              'img.toon_image, img[id^=toon_], .wt_viewer img, #comic_view img, img._images, img._centerImg, #_imageList img'
+            )
           );
           const fallback = nodes.length
             ? nodes
             : Array.from(document.images).filter(img => {
-                const u = img.getAttribute('data-src') || img.currentSrc || img.src || '';
-                return /image-comic|mobilewebimg|webtoon|comic/i.test(u);
+                const u = img.getAttribute('data-src') || img.getAttribute('data-url') || img.currentSrc || img.src || '';
+                return /image-comic|mobilewebimg|webtoon|comic|dongmanmanhua/i.test(u);
               });
           const out = [];
           const seen = new Set();
           for (const img of fallback) {
-            const u = (img.getAttribute('data-src')
+            if (/_thumbnailImages/.test(img.className || '')) continue;
+            const u = (img.getAttribute('data-url')
+              || img.getAttribute('data-src')
               || img.getAttribute('data-original')
               || img.currentSrc
               || img.src
               || '').trim();
             if (!u) continue;
-            if (/bg_transparency|spacer|blank|data:image\\/gif/i.test(u)) continue;
+            if (/bg_transparency|spacer|blank|thumbnail|data:image\\/gif/i.test(u)) continue;
             if (seen.has(u)) continue;
             seen.add(u);
             out.push(u);
