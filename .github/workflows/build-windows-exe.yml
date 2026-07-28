@@ -1,0 +1,54 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/screen-ocr-translator-d63f
+      - main
+    paths:
+      - "packaging/**"
+      - "screen_translator/**"
+      - "requirements.txt"
+      - ".github/workflows/build-windows-exe.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip wheel
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+          python -m playwright install chromium
+
+      - name: Build EXE (one-dir)
+        run: |
+          pyinstaller --noconfirm packaging/screen_translator.spec
+          copy .env.example dist\ScreenOCRTranslator\.env.example
+          copy packaging\使用说明.txt dist\ScreenOCRTranslator\使用说明.txt
+
+      - name: Zip package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\ScreenOCRTranslator\*" -DestinationPath "dist\ScreenOCRTranslator-windows.zip" -Force
+          Get-Item dist\ScreenOCRTranslator-windows.zip | Format-List Name,Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenOCRTranslator-windows
+          path: dist/ScreenOCRTranslator-windows.zip
+          if-no-files-found: error
+          retention-days: 14

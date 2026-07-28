@@ -11,6 +11,27 @@
 - **快捷键**：`Ctrl+Shift+T` 开始框选（窗口内；部分系统也支持全局热键）
 - **命令行**：无界面时也可对图片文件 OCR + 翻译
 
+## Windows 一键版（.exe）
+
+本仓库可用 PyInstaller 打成 Windows 程序（**文件夹分发**，内含 `ScreenOCRTranslator.exe`）。
+
+### 下载
+
+1. 打开 GitHub → **Actions** → **Build Windows EXE**
+2. 选最新成功运行 → Artifacts → 下载 `ScreenOCRTranslator-windows.zip`
+3. 解压后双击 `ScreenOCRTranslator.exe`（勿只拷单个 exe）
+
+也可在 Windows 本机自行打包：
+
+```bat
+packaging\build_windows.bat
+```
+
+产物在 `dist\ScreenOCRTranslator\`。把 **整个文件夹** 拷到任意 Windows 电脑即可用。  
+在 exe 同目录放 `.env` 配置豆包 Key（可参考 `.env.example` / `使用说明.txt`）。
+
+> 说明：当前云端是 Linux，不能直接产出 `.exe`；需在 Windows 或用上面的 GitHub Actions 构建。体积较大（含 OCR 模型库）属正常。
+
 ## AI 翻译（GPT / 豆包）
 
 默认仍是 Google（免 Key）。要接入 GPT 或豆包，复制 `.env.example` 为 `.env` 并填写：

@@ -1,0 +1,32 @@
+屏幕/网漫 OCR 翻译 —— Windows 使用说明
+================================
+
+1. 解压整个文件夹（不要只拷贝单个 exe）
+2. 双击 ScreenOCRTranslator.exe
+3. 会弹出小窗口，并自动打开浏览器界面
+4. 在网页里：上传图片 或 粘贴网漫链接
+
+配置翻译（豆包）
+----------------
+在 exe 同目录新建文件 .env ，内容例如：
+
+TRANSLATOR_BACKEND=doubao
+DOUBAO_API_KEY=你的key
+DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+DOUBAO_MODEL=doubao-seed-translation-250915
+
+也可不配 Key，默认可用 Google 翻译（免 Key，质量一般）。
+
+注意
+----
+- 首次识别韩文会下载 EasyOCR 模型，需联网，可能较慢
+- 抓取网页需要 Chromium；若失败请在本机安装：把文件夹里附带的 playwright 浏览器装好，或联网让程序自动装
+- 杀毒软件可能误报，请添加信任
+- 体积较大（含 OCR/深度学习库）属于正常现象
+
+本机重新打包
+------------
+在 Windows 安装 Python 3.11+ 后，双击运行：
+  packaging\build_windows.bat
+或 PowerShell：
+  .\packaging\build_windows.ps1

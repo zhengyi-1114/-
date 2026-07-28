@@ -13,19 +13,37 @@ from screen_translator.translate import BACKENDS, LANGUAGES, translate_lines, tr
 
 
 def _load_dotenv(override: bool = True) -> None:
-    env_path = Path(".env")
-    if not env_path.is_file():
-        return
-    environ = __import__("os").environ
-    for raw in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    import os
+    from pathlib import Path
+
+    candidates: list[Path] = []
+    home = os.environ.get("SCREEN_TRANSLATOR_HOME")
+    if home:
+        candidates.append(Path(home) / ".env")
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / ".env")
+    candidates.append(Path.cwd() / ".env")
+    candidates.append(Path(".env"))
+
+    environ = os.environ
+    seen: set[Path] = set()
+    for env_path in candidates:
+        try:
+            env_path = env_path.resolve()
+        except Exception:
             continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'").strip('"')
-        if key and (override or key not in environ):
-            environ[key] = value
+        if env_path in seen or not env_path.is_file():
+            continue
+        seen.add(env_path)
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'").strip('"')
+            if key and (override or key not in environ):
+                environ[key] = value
 
 
 def build_parser() -> argparse.ArgumentParser:
