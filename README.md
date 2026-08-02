@@ -66,6 +66,41 @@ DOUBAO_MODEL=doubao-seed-translation-250915
 python main.py page.png -s ko -t zh-CN --backend nmt --paired
 ```
 
+### 如何微调（可选）
+
+预训练 NLLB 已能用；若要对**网漫/武侠术语**更准，可用自己的韩中对照微调：
+
+1. **准备数据**（至少几百句，越多越好）  
+   - 用双语站对齐：`ref_localize` 产出的 `*-align.json` / `*-对照.txt`  
+   - 或手工 JSONL：每行 `{"source":"韩文","target":"中文"}`
+
+```bash
+python -m screen_translator.finetune_nmt prepare \
+  -i ep2-ref-align.json ep76-ko-zh-对照.txt \
+  -o data/train.jsonl
+```
+
+2. **训练**（建议 GPU；CPU 很慢）
+
+```bash
+pip install datasets accelerate
+python -m screen_translator.finetune_nmt train \
+  --train data/train.jsonl \
+  -o models/nllb-ko-zh-ft \
+  --epochs 3 --batch-size 4 --fp16
+```
+
+3. **启用微调模型**
+
+```bash
+export TRANSLATOR_BACKEND=nmt
+export NMT_ENGINE=nllb
+export NMT_MODEL=/绝对路径/models/nllb-ko-zh-ft
+python main.py --web
+```
+
+数据质量比数量更重要：优先用咚漫等人工汉化对照，少用错 OCR + 乱机译。
+
 ## 环境要求
 
 - Python 3.10+

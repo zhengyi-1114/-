@@ -11,5 +11,7 @@ img2pdf>=0.5.1
 transformers>=4.36.0
 sentencepiece>=0.1.99
 sacremoses>=0.0.53
+datasets>=2.16.0
+accelerate>=0.25.0
 # 可选：全局热键（Linux 需 python3-dev / 头文件）
 # pynput>=1.7.6
