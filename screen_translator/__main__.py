@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         default=None,
         choices=list(BACKENDS),
-        help="翻译后端: google / openai / doubao（默认读 TRANSLATOR_BACKEND）",
+        help="翻译后端: nmt / google / openai / doubao（默认读 TRANSLATOR_BACKEND，推荐 nmt）",
     )
     parser.add_argument(
         "--paired",
@@ -133,7 +133,7 @@ def run_on_image(
             path,
             source=source if source != "auto" else "ko",
             target=target,
-            backend=backend or "doubao",
+            backend=backend or "nmt",
         )
         print(
             f"文本框 {result['boxes']} → 气泡 {result['bubbles']}，"

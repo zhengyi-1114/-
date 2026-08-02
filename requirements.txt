@@ -8,5 +8,8 @@ numpy>=1.24.0
 gradio>=4.0.0
 playwright>=1.40.0
 img2pdf>=0.5.1
+transformers>=4.36.0
+sentencepiece>=0.1.99
+sacremoses>=0.0.53
 # 可选：全局热键（Linux 需 python3-dev / 头文件）
 # pynput>=1.7.6

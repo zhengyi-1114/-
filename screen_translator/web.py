@@ -283,7 +283,7 @@ def build_demo() -> gr.Blocks:
     try:
         default_backend = resolve_backend(None)
     except Exception:
-        default_backend = "doubao"
+        default_backend = "nmt"
     default_backend_label = next(
         (c for c in BACKEND_CHOICES if c.endswith(f"({default_backend})")),
         BACKEND_CHOICES[-1],
@@ -297,7 +297,7 @@ def build_demo() -> gr.Blocks:
             1. **网页链接**（自动下载网漫切图；可打包 ZIP 下载到本机）
             2. **直接上传图片**
             
-            推荐开启「网漫气泡模式」+ 豆包翻译。  
+            推荐开启「网漫气泡模式」；翻译默认本地深度学习 NMT。  
             想只要图片：用「只保存图片到电脑」→ 下载 ZIP → 解压得到普通 JPG。
             """
         )

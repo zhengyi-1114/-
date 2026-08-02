@@ -32,30 +32,39 @@ packaging\build_windows.bat
 
 > 说明：当前云端是 Linux，不能直接产出 `.exe`；需在 Windows 或用上面的 GitHub Actions 构建。体积较大（含 OCR 模型库）属正常。
 
-## AI 翻译（GPT / 豆包）
+## 翻译后端
 
-默认仍是 Google（免 Key）。要接入 GPT 或豆包，复制 `.env.example` 为 `.env` 并填写：
+**默认：本地深度学习 NMT**（`nmt`，不走 GPT/豆包大模型 API）。
 
 ```bash
-# GPT
+TRANSLATOR_BACKEND=nmt
+# NMT_ENGINE=auto          # auto / nllb / marian
+# NMT_MODEL=facebook/nllb-200-distilled-600M
+```
+
+首次运行会从 Hugging Face 下载 NLLB 模型（约几百 MB），之后离线可用。  
+若 NLLB 不可用，会自动回退 MarianMT（韩→英→中）。
+
+可选其它后端：
+
+```bash
+# Google（免 Key，需联网）
+TRANSLATOR_BACKEND=google
+
+# GPT / 豆包（大模型 API，可选）
 TRANSLATOR_BACKEND=openai
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
 
-# 豆包（火山方舟）
 TRANSLATOR_BACKEND=doubao
 DOUBAO_API_KEY=你的方舟Key
-DOUBAO_MODEL=ep-xxxxxxxx   # 控制台里的推理接入点 ID
+DOUBAO_MODEL=doubao-seed-translation-250915
 ```
 
-命令行也可临时指定：
+命令行：
 
 ```bash
-python main.py page.png -s ko -t zh-CN --backend openai --paired
-python main.py page.png -s ko -t zh-CN --backend doubao --paired
+python main.py page.png -s ko -t zh-CN --backend nmt --paired
 ```
-
-任何 OpenAI 兼容接口（DeepSeek、通义、本地 vLLM 等）都可把 `OPENAI_BASE_URL` 指过去。
 
 ## 环境要求
 
@@ -137,7 +146,7 @@ python main.py --web
 - **网页链接**：粘贴 Naver 等网漫 URL，自动滚动懒加载截长图并翻译
 - **上传图片**：直接上传截图/长图
 
-默认网漫气泡模式；豆包需在 `.env` 配置 Key。
+默认网漫气泡模式；翻译默认本地 NMT（深度学习），无需大模型 Key。
 
 ### 桌面图形界面（本机框选屏幕）
 
@@ -182,7 +191,8 @@ screen_translator/
   webtoon.py      # 网漫气泡定位翻译
   capture.py      # 截屏与区域框选
   ocr.py          # RapidOCR / EasyOCR 识别
-  translate.py    # Google / GPT / 豆包翻译
+  translate.py    # NMT / Google / GPT / 豆包翻译
+  nmt.py          # 本地深度学习神经机器翻译
   __main__.py     # CLI / GUI / Web 入口
 capture_page.py   # 懒加载截图命令行入口
 main.py

@@ -277,18 +277,19 @@ def translate_bubbles(
     *,
     source: str = "ko",
     target: str = "zh-CN",
-    backend: str = "doubao",
+    backend: str = "nmt",
     context_window: int = 2,
     skip_noise: bool = True,
 ) -> list[Bubble]:
     """
     按气泡整段翻译（先聚合对白，再翻译，避免碎行乱译）。
-    若后端是通用对话模型，会附带上文；seed-translation 则只译当前气泡全文。
+    若后端是通用对话模型，会附带上文；seed-translation / NMT 则只译当前气泡全文。
     """
     import os
 
     model = os.getenv("DOUBAO_MODEL", "")
     use_seed = backend == "doubao" and "translation" in model
+    use_plain = backend in {"nmt", "google"} or use_seed
     recent: list[str] = []
 
     for bubble in bubbles:
@@ -296,7 +297,8 @@ def translate_bubbles(
             bubble.translated = ""
             continue
 
-        if use_seed or context_window <= 0 or not recent:
+        # NMT/Google/seed 不吃「上文提示」，只译气泡原文
+        if use_plain or context_window <= 0 or not recent:
             prompt = bubble.text
             bubble.context_used = ""
         else:
@@ -315,7 +317,7 @@ def translate_bubbles(
             continue
 
         translated = raw.strip()
-        if not use_seed:
+        if not use_plain:
             for marker in ("请只翻译下面这句对白", "不要翻译上文", "当前：", "对白："):
                 if marker in translated:
                     translated = translated.split(marker)[-1].strip(" ：:\n")
@@ -327,7 +329,9 @@ def translate_bubbles(
         bubble.translated = translated
         if bubble.translated and not bubble.translated.startswith("[翻译失败"):
             recent.append(bubble.text.replace("\n", " "))
-        time.sleep(0.12)
+        # 本地 NMT 无需限速；云端 API 稍作间隔
+        if backend not in {"nmt", "google"}:
+            time.sleep(0.12)
     return bubbles
 
 
@@ -389,7 +393,7 @@ def process_webtoon(
     *,
     source: str = "ko",
     target: str = "zh-CN",
-    backend: str = "doubao",
+    backend: str = "nmt",
     out_dir: str | Path = "/opt/cursor/artifacts",
 ) -> dict[str, Any]:
     image_path = Path(image_path)

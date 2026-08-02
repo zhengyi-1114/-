@@ -1,4 +1,4 @@
-"""翻译模块：支持 Google / GPT(OpenAI) / 豆包(火山方舟)。"""
+"""翻译模块：默认本地 NMT（深度学习），也可选 Google / GPT / 豆包。"""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ LANGUAGES: dict[str, str] = {
 }
 
 BACKENDS = {
+    "nmt": "本地深度学习 NMT（推荐，无需大模型 Key）",
     "google": "Google 翻译（免 Key）",
     "openai": "OpenAI / GPT（兼容接口）",
     "doubao": "豆包 / 火山方舟",
@@ -96,11 +97,13 @@ def guess_source_lang(text: str) -> str:
 
 
 def resolve_backend(backend: Optional[str] = None) -> str:
-    name = (backend or os.getenv("TRANSLATOR_BACKEND") or "google").strip().lower()
+    name = (backend or os.getenv("TRANSLATOR_BACKEND") or "nmt").strip().lower()
     if name in {"gpt", "chatgpt"}:
         name = "openai"
     if name in {"ark", "volc", "火山"}:
         name = "doubao"
+    if name in {"local", "dl", "deep", "marian", "nllb", "offline"}:
+        name = "nmt"
     if name not in BACKENDS:
         raise ValueError(f"未知翻译后端: {backend}，可选: {', '.join(BACKENDS)}")
     return name
@@ -337,7 +340,7 @@ def translate_text(
     target: str = "zh-CN",
     backend: Optional[str] = None,
 ) -> str:
-    """翻译整段文本。backend: google / openai / doubao。"""
+    """翻译整段文本。backend: nmt / google / openai / doubao。"""
     cleaned = text.strip()
     if not cleaned:
         return ""
@@ -352,6 +355,10 @@ def translate_text(
         return cleaned
 
     engine = resolve_backend(backend)
+    if engine == "nmt":
+        from screen_translator.nmt import translate_nmt
+
+        return translate_nmt(cleaned, src, tgt)
     if engine == "google":
         return _translate_google(cleaned, src, tgt)
     return _translate_ai(cleaned, src, tgt, engine, paired=False)
@@ -383,12 +390,19 @@ def translate_lines(
     engine = resolve_backend(backend)
     out: list[str] = [""] * len(cleaned)
 
-    if engine == "google":
+    if engine in {"nmt", "google"}:
         for i, ln in enumerate(cleaned):
             if not ln:
                 out[i] = ""
             elif src == tgt:
                 out[i] = ln
+            elif engine == "nmt":
+                from screen_translator.nmt import translate_nmt
+
+                try:
+                    out[i] = translate_nmt(ln, src, tgt)
+                except Exception as exc:
+                    out[i] = f"[翻译失败: {exc}]"
             else:
                 out[i] = _translate_google(ln, src, tgt)
         return out
