@@ -67,17 +67,37 @@ def load_pairs_from_paired_txt(path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
+def _pair_from_row(row: dict) -> Optional[tuple[str, str]]:
+    src = _flat(row.get("source") or row.get("ko") or "")
+    tgt = _flat(row.get("target") or row.get("zh") or row.get("zh_ref") or "")
+    if len(src) >= 2 and len(tgt) >= 2:
+        return src, tgt
+    return None
+
+
 def load_pairs_from_jsonl(path: Path) -> list[tuple[str, str]]:
+    """支持标准 JSONL（一行一条），也支持缩进后的 JSON 数组。"""
+    text = path.read_text(encoding="utf-8").strip()
     pairs: list[tuple[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    if not text:
+        return pairs
+    # 缩进保存的 JSON 数组
+    if text.startswith("["):
+        data = json.loads(text)
+        for row in data:
+            if isinstance(row, dict):
+                item = _pair_from_row(row)
+                if item:
+                    pairs.append(item)
+        return pairs
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
         row = json.loads(line)
-        src = _flat(row.get("source") or row.get("ko") or "")
-        tgt = _flat(row.get("target") or row.get("zh") or row.get("zh_ref") or "")
-        if len(src) >= 2 and len(tgt) >= 2:
-            pairs.append((src, tgt))
+        item = _pair_from_row(row)
+        if item:
+            pairs.append(item)
     return pairs
 
 
@@ -86,6 +106,19 @@ def load_pairs(path: Path) -> list[tuple[str, str]]:
     if suf == ".jsonl":
         return load_pairs_from_jsonl(path)
     if suf == ".json":
+        # align.json 或 source/target 数组均可
+        text = path.read_text(encoding="utf-8").strip()
+        if text.startswith("["):
+            data = json.loads(text)
+            if data and isinstance(data[0], dict) and (
+                "source" in data[0] or "target" in data[0]
+            ):
+                pairs: list[tuple[str, str]] = []
+                for row in data:
+                    item = _pair_from_row(row)
+                    if item:
+                        pairs.append(item)
+                return pairs
         return load_pairs_from_align_json(path)
     return load_pairs_from_paired_txt(path)
 
@@ -127,19 +160,16 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 
 def cmd_train(args: argparse.Namespace) -> int:
+    """纯 PyTorch 微调循环（避免 Trainer/torchvision 兼容问题）。"""
     try:
+        import random
+
         import torch
-        from datasets import Dataset
-        from transformers import (
-            AutoModelForSeq2SeqLM,
-            AutoTokenizer,
-            DataCollatorForSeq2Seq,
-            Seq2SeqTrainer,
-            Seq2SeqTrainingArguments,
-        )
+        from torch.utils.data import DataLoader, Dataset
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
     except ImportError as exc:
         print(
-            "缺少依赖。请安装：pip install transformers datasets accelerate sentencepiece",
+            "缺少依赖。请安装：pip install transformers torch sentencepiece",
             file=sys.stderr,
         )
         print(exc, file=sys.stderr)
@@ -151,94 +181,117 @@ def cmd_train(args: argparse.Namespace) -> int:
         print("训练数据太少（<10），请先 prepare 更多对照。", file=sys.stderr)
         return 1
 
-    # 简单划分验证集
     val_ratio = max(0.0, min(0.2, float(args.val_ratio)))
     n_val = int(len(pairs) * val_ratio) if len(pairs) >= 50 else 0
-    val_pairs = pairs[:n_val]
-    train_pairs = pairs[n_val:] or pairs
+    rng = random.Random(42)
+    shuffled = list(pairs)
+    rng.shuffle(shuffled)
+    val_pairs = shuffled[:n_val]
+    train_pairs = shuffled[n_val:] or shuffled
 
     model_name = args.base_model
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = AutoTokenizer.from_pretrained(model_name)
     if hasattr(tok, "src_lang"):
         tok.src_lang = SRC_LANG
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    model.to(device)
+    model.train()
 
-    def to_ds(items: list[tuple[str, str]]) -> Dataset:
-        return Dataset.from_dict(
-            {"source": [a for a, _ in items], "target": [b for _, b in items]}
-        )
+    class PairDataset(Dataset):
+        def __init__(self, items: list[tuple[str, str]]):
+            self.items = items
 
-    def preprocess(batch):
-        tok.src_lang = SRC_LANG
-        model_inputs = tok(
-            batch["source"],
+        def __len__(self) -> int:
+            return len(self.items)
+
+        def __getitem__(self, idx: int) -> tuple[str, str]:
+            return self.items[idx]
+
+    def collate(batch: list[tuple[str, str]]):
+        sources = [a for a, _ in batch]
+        targets = [b for _, b in batch]
+        if hasattr(tok, "src_lang"):
+            tok.src_lang = SRC_LANG
+        enc = tok(
+            sources,
             max_length=args.max_length,
             truncation=True,
+            padding=True,
+            return_tensors="pt",
         )
-        labels = tok(
-            text_target=batch["target"],
+        lab = tok(
+            text_target=targets,
             max_length=args.max_length,
             truncation=True,
+            padding=True,
+            return_tensors="pt",
         )
-        model_inputs["labels"] = labels["input_ids"]
-        return model_inputs
+        labels = lab["input_ids"]
+        labels[labels == tok.pad_token_id] = -100
+        enc["labels"] = labels
+        return enc
 
-    train_ds = to_ds(train_pairs).map(preprocess, batched=True, remove_columns=["source", "target"])
-    eval_ds = (
-        to_ds(val_pairs).map(preprocess, batched=True, remove_columns=["source", "target"])
-        if val_pairs
-        else None
+    loader = DataLoader(
+        PairDataset(train_pairs),
+        batch_size=max(1, int(args.batch_size)),
+        shuffle=True,
+        collate_fn=collate,
     )
-
-    use_fp16 = bool(args.fp16 and torch.cuda.is_available())
-    targs = Seq2SeqTrainingArguments(
-        output_dir=str(out_dir / "checkpoints"),
-        learning_rate=args.lr,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        warmup_ratio=0.06,
-        weight_decay=0.01,
-        logging_steps=20,
-        save_strategy="epoch",
-        eval_strategy="epoch" if eval_ds is not None else "no",
-        predict_with_generate=False,
-        fp16=use_fp16,
-        report_to=[],
-        save_total_limit=2,
-    )
-    collator = DataCollatorForSeq2Seq(tok, model=model)
-    trainer_kwargs = dict(
-        model=model,
-        args=targs,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        data_collator=collator,
-    )
-    # transformers 新旧版本参数名不同
-    try:
-        trainer = Seq2SeqTrainer(**trainer_kwargs, processing_class=tok)
-    except TypeError:
-        trainer = Seq2SeqTrainer(**trainer_kwargs, tokenizer=tok)
+    optim = torch.optim.AdamW(model.parameters(), lr=float(args.lr), weight_decay=0.01)
+    epochs = max(1, int(float(args.epochs)))
+    grad_accum = max(1, int(args.grad_accum))
     print(
         f"[train] base={model_name} train={len(train_pairs)} val={len(val_pairs)} "
-        f"device={'cuda' if torch.cuda.is_available() else 'cpu'}",
+        f"device={device} epochs={epochs}",
         file=sys.stderr,
     )
-    trainer.train()
-    trainer.save_model(str(out_dir))
-    tok.save_pretrained(str(out_dir))
+
+    global_step = 0
+    optim.zero_grad(set_to_none=True)
+    for epoch in range(1, epochs + 1):
+        running = 0.0
+        steps = 0
+        for i, batch in enumerate(loader, 1):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            out = model(**batch)
+            loss = out.loss / grad_accum
+            loss.backward()
+            running += float(out.loss.detach().cpu())
+            steps += 1
+            if i % grad_accum == 0 or i == len(loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optim.step()
+                optim.zero_grad(set_to_none=True)
+                global_step += 1
+                if global_step == 1 or global_step % 10 == 0:
+                    avg = running / max(1, steps)
+                    print(
+                        f"[train] epoch={epoch}/{epochs} step={global_step} loss={avg:.4f}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    running = 0.0
+                    steps = 0
+        # 每个 epoch 存一次中间权重
+        ckpt = out_dir / "checkpoints" / f"epoch-{epoch}"
+        ckpt.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(ckpt)
+        tok.save_pretrained(ckpt)
+
+    model.save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
     meta = {
         "base_model": model_name,
         "src_lang": SRC_LANG,
         "tgt_lang": TGT_LANG,
         "train_size": len(train_pairs),
         "val_size": len(val_pairs),
-        "epochs": args.epochs,
+        "epochs": epochs,
+        "device": str(device),
     }
     (out_dir / "finetune_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
