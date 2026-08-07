@@ -90,6 +90,15 @@ python -m screen_translator.finetune_nmt train \
   --epochs 3 --batch-size 4 --fp16
 ```
 
+从已有权重继续训（更小学习率）：
+
+```bash
+python -m screen_translator.finetune_nmt train \
+  --train data/train.jsonl \
+  -o models/nllb-ko-zh-ft \
+  --resume --epochs 3 --lr 5e-6 --batch-size 2 --grad-accum 8
+```
+
 3. **启用微调模型**
 
 ```bash
@@ -99,7 +108,7 @@ export NMT_MODEL=/绝对路径/models/nllb-ko-zh-ft
 python main.py --web
 ```
 
-数据质量比数量更重要：优先用咚漫等人工汉化对照，少用错 OCR + 乱机译。
+数据质量比数量更重要：优先用咚漫等人工汉化对照，少用错 OCR + 乱机译。术语建议过采样；NLLB 词表对部分简体武侠用字可能是 `<unk>`，可改近义或繁体再训。
 
 ## 环境要求
 

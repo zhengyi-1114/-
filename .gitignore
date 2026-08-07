@@ -20,4 +20,6 @@ webtoon-*.txt
 webtoon-ko-zh-*.txt
 models/
 data/train.jsonl
+data/train.oversample.jsonl
 data/wuxia-*.jsonl
+logs/
