@@ -234,8 +234,11 @@ def cmd_train(args: argparse.Namespace) -> int:
     def collate(batch: list[tuple[str, str]]):
         sources = [a for a, _ in batch]
         targets = [b for _, b in batch]
+        # NLLB 必须分别设置源/目标语种码，否则 labels 会错误地带上 src 前缀
         if hasattr(tok, "src_lang"):
             tok.src_lang = SRC_LANG
+        if hasattr(tok, "set_src_lang_special_tokens"):
+            tok.set_src_lang_special_tokens(SRC_LANG)
         enc = tok(
             sources,
             max_length=args.max_length,
@@ -243,6 +246,10 @@ def cmd_train(args: argparse.Namespace) -> int:
             padding=True,
             return_tensors="pt",
         )
+        if hasattr(tok, "tgt_lang"):
+            tok.tgt_lang = TGT_LANG
+        if hasattr(tok, "set_tgt_lang_special_tokens"):
+            tok.set_tgt_lang_special_tokens(TGT_LANG)
         lab = tok(
             text_target=targets,
             max_length=args.max_length,
