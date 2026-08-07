@@ -14,6 +14,11 @@
   python -m screen_translator.finetune_nmt train \\
     --train data/train.jsonl -o models/nllb-ko-zh-ft --epochs 3
 
+  # 从已有微调权重继续训（更小学习率）
+  python -m screen_translator.finetune_nmt train \\
+    --train data/train.jsonl -o models/nllb-ko-zh-ft \\
+    --base-model models/nllb-ko-zh-ft --epochs 3 --lr 5e-6
+
   # 使用微调模型
   export TRANSLATOR_BACKEND=nmt
   export NMT_MODEL=/绝对路径/models/nllb-ko-zh-ft
@@ -189,9 +194,24 @@ def cmd_train(args: argparse.Namespace) -> int:
     val_pairs = shuffled[:n_val]
     train_pairs = shuffled[n_val:] or shuffled
 
-    model_name = args.base_model
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 继续训练：--resume 时优先加载输出目录已有权重
+    model_name = args.base_model
+    if args.resume and (out_dir / "config.json").is_file():
+        model_name = str(out_dir.resolve())
+        print(f"[train] resume from {model_name}", file=sys.stderr)
+    elif Path(model_name).is_dir() and (Path(model_name) / "config.json").is_file():
+        model_name = str(Path(model_name).resolve())
+
+    prev_meta: dict = {}
+    meta_path = out_dir / "finetune_meta.json"
+    if meta_path.is_file():
+        try:
+            prev_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            prev_meta = {}
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = AutoTokenizer.from_pretrained(model_name)
@@ -284,18 +304,30 @@ def cmd_train(args: argparse.Namespace) -> int:
 
     model.save_pretrained(out_dir)
     tok.save_pretrained(out_dir)
+    history = list(prev_meta.get("history") or [])
+    history.append(
+        {
+            "loaded_from": model_name,
+            "epochs": epochs,
+            "lr": float(args.lr),
+            "batch_size": int(args.batch_size),
+            "grad_accum": grad_accum,
+            "train_size": len(train_pairs),
+            "steps": global_step,
+        }
+    )
     meta = {
-        "base_model": model_name,
+        "base_model": prev_meta.get("base_model") or model_name,
         "src_lang": SRC_LANG,
         "tgt_lang": TGT_LANG,
         "train_size": len(train_pairs),
         "val_size": len(val_pairs),
-        "epochs": epochs,
+        "epochs": int(prev_meta.get("epochs") or 0) + epochs,
+        "last_lr": float(args.lr),
         "device": str(device),
+        "history": history,
     }
-    (out_dir / "finetune_meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     print(out_dir)
     print(
         "使用方式：\n"
@@ -336,6 +368,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_tr.add_argument("--lr", type=float, default=1e-5)
     p_tr.add_argument("--max-length", type=int, default=128)
     p_tr.add_argument("--val-ratio", type=float, default=0.1)
+    p_tr.add_argument(
+        "--resume",
+        action="store_true",
+        help="从 -o 输出目录已有权重继续训练",
+    )
     p_tr.add_argument("--fp16", action="store_true", help="GPU 半精度")
     p_tr.set_defaults(func=cmd_train)
     return p
