@@ -109,6 +109,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=7860,
         help="网页服务端口，默认 7860",
     )
+    parser.add_argument(
+        "--localize-url",
+        default=None,
+        help="网漫 URL：下载切图 → OCR/翻译/擦字嵌字 → 保存汉化图到 -o 目录",
+    )
+    parser.add_argument(
+        "--localize-cuts",
+        default=None,
+        help="已有切图目录：逐张汉化并保存到 -o 目录",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="汉化图输出目录（配合 --localize-url / --localize-cuts）",
+    )
+    parser.add_argument(
+        "--font",
+        default=None,
+        help="中文字体路径（可选；默认自动探测系统字体）",
+    )
+    parser.add_argument(
+        "--capture-method",
+        default="images",
+        choices=["auto", "images", "scroll", "screenshot"],
+        help="抓取方式，默认 images（网漫切图）",
+    )
     return parser
 
 
@@ -176,10 +203,52 @@ def run_on_image(
     return 0
 
 
+def run_localize(args: argparse.Namespace) -> int:
+    from screen_translator.localize_pipeline import localize_cuts_dir, localize_url
+    from screen_translator.translate import resolve_backend
+
+    out = args.output
+    if not out:
+        print("请用 -o/--output 指定汉化图输出目录", file=sys.stderr)
+        return 1
+    out_dir = Path(out)
+    backend = resolve_backend(args.backend)
+    source = args.source if args.source != "auto" else "ko"
+
+    if args.localize_url:
+        result = localize_url(
+            args.localize_url,
+            out_dir,
+            source=source,
+            target=args.target,
+            backend=backend,
+            font_path=args.font,
+            method=args.capture_method,
+        )
+    else:
+        result = localize_cuts_dir(
+            Path(args.localize_cuts),
+            out_dir,
+            source=source,
+            target=args.target,
+            backend=backend,
+            font_path=args.font,
+        )
+
+    print(
+        f"完成：共 {result.cuts_total} 张，汉化 {result.localized}，"
+        f"原样复制 {result.copied_as_is} → {result.out_dir}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _load_dotenv(override=True)
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.localize_url or args.localize_cuts:
+        return run_localize(args)
 
     if args.web:
         from screen_translator.web import run_web

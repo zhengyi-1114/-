@@ -207,6 +207,23 @@ python main.py
 
 > 云端 Agent 里的桌面窗口跑在远程 VNC 上，聊天面板里通常看不到；请用 `--web` 网页版，或在本机运行桌面版。
 
+### 网漫 URL 自动汉化成片（保存到本地）
+
+抓取切图 → OCR（带框）→ 本地 NMT → 擦字 → 嵌中文 → 输出 `001.jpg, 002.jpg…`：
+
+```bash
+python main.py --localize-url "https://m.comic.naver.com/webtoon/detail?..." \
+  -o out/ep76 -s ko -t zh-CN --backend nmt
+```
+
+已有切图目录时：
+
+```bash
+python main.py --localize-cuts path/to/cuts -o out/ep76 -s ko
+```
+
+说明：无韩文的切图会原样复制进输出以保持页序；默认一次处理 1 张。
+
 ### 命令行（图片）
 
 ```bash
@@ -229,16 +246,18 @@ python main.py page.png --webtoon -s ko -t zh-CN --backend doubao
 
 ```
 screen_translator/
-  app.py          # 桌面图形界面
-  web.py          # 网页界面（Gradio：链接/图片）
-  web_capture.py  # 懒加载滚屏截图（可复用）
-  webtoon.py      # 网漫气泡定位翻译
-  capture.py      # 截屏与区域框选
-  ocr.py          # RapidOCR / EasyOCR 识别
-  translate.py    # NMT / Google / GPT / 豆包翻译
-  nmt.py          # 本地深度学习神经机器翻译
-  __main__.py     # CLI / GUI / Web 入口
-capture_page.py   # 懒加载截图命令行入口
+  app.py               # 桌面图形界面
+  web.py               # 网页界面（Gradio：链接/图片）
+  web_capture.py       # 懒加载滚屏截图（可复用）
+  webtoon.py           # 网漫气泡定位翻译
+  localize_pipeline.py # URL/切图 → 汉化成片流水线
+  render_localize.py   # 擦字 + 中文嵌字
+  capture.py           # 截屏与区域框选
+  ocr.py               # RapidOCR / EasyOCR 识别
+  translate.py         # NMT / Google / GPT / 豆包翻译
+  nmt.py               # 本地深度学习神经机器翻译
+  __main__.py          # CLI / GUI / Web 入口
+capture_page.py        # 懒加载截图命令行入口
 main.py
 requirements.txt
 ```

@@ -31,3 +31,7 @@ webtoon-ko-zh-*.txt
 
 # 过采样临时集（可由 train.jsonl 再生成）
 data/train.oversample.jsonl
+
+# 汉化输出 / 抓取工作目录
+out/
+*-work/
