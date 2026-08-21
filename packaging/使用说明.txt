@@ -1,0 +1,33 @@
+屏幕/网漫 OCR 翻译 —— Windows 使用说明
+================================
+
+1. 解压整个文件夹（不要只拷贝单个 exe）
+2. 双击 ScreenOCRTranslator.exe
+3. 会弹出小窗口，并自动打开浏览器界面
+4. 在网页里：上传图片 或 粘贴网漫链接
+
+配置翻译
+--------
+默认使用本地深度学习 NMT（无需大模型 Key）。在 exe 同目录新建 .env：
+
+TRANSLATOR_BACKEND=nmt
+
+首次翻译会下载 NLLB 模型，需联网一次。
+
+也可改用：
+TRANSLATOR_BACKEND=google
+或豆包/GPT（需自行填 Key，见 .env.example）。
+
+注意
+----
+- 首次识别韩文会下载 EasyOCR 模型，需联网，可能较慢
+- 抓取网页需要 Chromium；若失败请在本机安装：把文件夹里附带的 playwright 浏览器装好，或联网让程序自动装
+- 杀毒软件可能误报，请添加信任
+- 体积较大（含 OCR/深度学习库）属于正常现象
+
+本机重新打包
+------------
+在 Windows 安装 Python 3.11+ 后，双击运行：
+  packaging\build_windows.bat
+或 PowerShell：
+  .\packaging\build_windows.ps1
