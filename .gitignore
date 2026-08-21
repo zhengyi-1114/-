@@ -1,5 +1,11 @@
+# 环境与隐私（勿提交真实 Key）
 .venv/
 .cache/
+.env
+.env.*
+!.env.example
+
+# 本地缓存 / 构建产物
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -9,18 +15,19 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .gradio/
+logs/
+.DS_Store
+
+# 大模型权重（体积过大，需本机训练生成）
+models/
+
+# 运行时截图 / 临时输出
 *.png
 *.jpg
 page.png
 page-*.png
-.DS_Store
-.env
-.env.*
-!.env.example
 webtoon-*.txt
 webtoon-ko-zh-*.txt
-models/
-data/train.jsonl
+
+# 过采样临时集（可由 train.jsonl 再生成）
 data/train.oversample.jsonl
-data/wuxia-*.jsonl
-logs/
